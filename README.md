@@ -38,8 +38,10 @@ The free Apple ID signature expires after **7 days**; when it does, repeat step 
    echo 192.168.2.161 > phone-ip.txt   # iPhone on home Wi-Fi
    echo 100.91.246.93 > tailscale-ip.txt
    ```
-2. `brew install node`, then `chmod +x *.sh && ./install-panel-mac.sh`.
-   The panel now starts automatically at login and restarts itself if it crashes.
+2. `brew install node`, then `chmod +x *.sh *.command && ./install-panel-mac.sh`.
+   The panel runs in a Terminal window ("Start Panel.command") that opens at login and restarts
+   the panel if it crashes. It deliberately doesn't use a hidden launchd service: macOS
+   Local Network privacy blocks those from reaching the iPhone/Tailscale.
 3. On your phone, open `http://<Mac Tailscale IP>:3100` in Safari, then
    Share → **Add to Home Screen** to get an app icon.
 4. Run only one bot at a time. Don't also run it on the Windows PC.

@@ -1,56 +1,46 @@
 #!/usr/bin/env bash
-# macOS: run the giveaway control panel (panel.js) in the background, always.
-# It starts at login, restarts if it crashes, and is reachable from your phone over Tailscale:
-#   http://<Mac's Tailscale IP>:3100
+# macOS: make the giveaway control panel start automatically at login.
 #
-# Install:    ./install-panel-mac.sh
+# The panel runs in a Terminal window ("Start Panel.command") instead of a hidden launchd
+# service: macOS "Local Network" privacy (macOS 15+) silently blocks a launchd-started node
+# from reaching the iPhone and from answering over Tailscale, while Terminal is allowed.
+#
+# Install:    ./install-panel-mac.sh      (adds a Login Item and starts the panel now)
 # Uninstall:  ./install-panel-mac.sh uninstall
 set -euo pipefail
 
-LABEL="com.wnbot.panel"
-PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 DIR="$(cd "$(dirname "$0")" && pwd)"
-NODE="$(command -v node || true)"
+CMD="$DIR/Start Panel.command"
+OLD_LABEL="com.wnbot.panel"
+
+# Remove the old launchd version if it's there (it can't reach the network, see above).
+launchctl bootout "gui/$(id -u)/$OLD_LABEL" 2>/dev/null || true
+rm -f "$HOME/Library/LaunchAgents/$OLD_LABEL.plist"
+
+remove_login_item() {
+  osascript -e 'tell application "System Events" to delete (every login item whose name is "Start Panel.command")' >/dev/null 2>&1 || true
+}
 
 if [ "${1:-}" = "uninstall" ]; then
-  launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
-  rm -f "$PLIST"
-  echo "Panel autostart removed."
+  remove_login_item
+  echo "Panel login item removed. Close the 'Giveaway Panel' Terminal window to stop it."
   exit 0
 fi
 
-[ -z "$NODE" ] && { echo "Node.js not found. Install it first: brew install node"; exit 1; }
+command -v node >/dev/null || { echo "Node.js not found. Install it first: brew install node"; exit 1; }
 for f in passcode.txt phone-ip.txt tailscale-ip.txt; do
   [ -f "$DIR/$f" ] || echo "Warning: $f is missing in $DIR (see README)."
 done
+chmod +x "$CMD"
 
-mkdir -p "$HOME/Library/LaunchAgents"
-cat > "$PLIST" <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key><string>$LABEL</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>$NODE</string>
-    <string>$DIR/panel.js</string>
-  </array>
-  <key>WorkingDirectory</key><string>$DIR</string>
-  <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
-  <key>ThrottleInterval</key><integer>10</integer>
-  <key>StandardOutPath</key><string>$DIR/panel-out.txt</string>
-  <key>StandardErrorPath</key><string>$DIR/panel-err.txt</string>
-</dict>
-</plist>
-EOF
+remove_login_item
+osascript -e "tell application \"System Events\" to make login item at end with properties {path:\"$CMD\", hidden:false}" >/dev/null
+echo "Login item added: the panel opens in Terminal every time you log in."
 
-launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
-launchctl bootstrap "gui/$(id -u)" "$PLIST"
-sleep 2
-echo "Panel installed and running:"
-cat "$DIR/panel-out.txt" 2>/dev/null | tail -5
-echo
-echo "Open on your phone: http://$( (command -v tailscale >/dev/null && tailscale ip -4) || echo '<Mac Tailscale IP>' ):3100"
-echo "If macOS asks whether node may accept incoming connections: Allow."
+if lsof -iTCP:3100 -sTCP:LISTEN >/dev/null 2>&1; then
+  echo "A panel is already running on port 3100 - not starting a second one."
+else
+  open "$CMD"
+  echo "Panel started in a new Terminal window."
+fi
+echo "Open on your phone: http://$(/Applications/Tailscale.app/Contents/MacOS/Tailscale ip -4 2>/dev/null || echo '<Mac Tailscale IP>'):3100"

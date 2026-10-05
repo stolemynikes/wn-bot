@@ -9,7 +9,7 @@ including when they're away from home.
 iPhone (WebDriverAgent on :8100) <-- HTTP --  giveaway-bot.js (Node, on this Mac)
                                                      ^
                                                      | fork + IPC "stop"
-                                              panel.js (Node, :3100, launchd agent)
+                                              panel.js (Node, :3100, in a Terminal window)
                                                      ^
                                           user's phone browser over Tailscale
 ```
@@ -42,14 +42,8 @@ Devices (Tailscale):
   where the **Bid** button is.
 
 ## Setup
-1. **Repo location matters.** Clone it into the home folder, **not** Desktop/Documents/Downloads/iCloud:
-   ```
-   cd ~ && git clone https://github.com/stolemynikes/wn-bot.git && cd ~/wn-bot
-   ```
-   macOS privacy protection (TCC) blocks background launchd agents from reading
-   Desktop/Documents/Downloads. If the panel runs from there, it can't read its files. If it's
-   already cloned in one of those folders: move it to `~/wn-bot`, then run
-   `./install-panel-mac.sh` again.
+1. **Repo location:** currently `~/Dev/wn-bot` (fine). Avoid Desktop/Documents/Downloads/iCloud
+   folders; macOS privacy protection makes those awkward for background processes.
 2. **Node 18+:** `brew install node`, then `node -v`.
 3. **Local files** (not in git). Ask the user for the passcode; don't guess it:
    ```
@@ -65,8 +59,16 @@ Devices (Tailscale):
    WDA_DIR=~/WebDriverAgent ./wda-keepalive.sh 00008120-001818A92683C01E
    ```
    (Run it in its own Terminal window; it rebuilds/restarts WDA whenever it stops.)
-5. **Panel as an always-on service:** `./install-panel-mac.sh`. If macOS asks whether `node` may
-   accept incoming connections: **Allow**.
+5. **Panel always on:** `./install-panel-mac.sh`.
+   - It adds `Start Panel.command` as a **Login Item** and opens it now. The panel runs in a
+     Terminal window titled "Giveaway Panel" and restarts itself if it stops. Leave that window open.
+   - **Why not a hidden launchd service?** macOS 15+ **Local Network privacy** silently blocks a
+     launchd-started `node` from talking to devices on the network. The phone's panel page then
+     says "server stopped responding", and the bot can't reach the iPhone. Terminal has the
+     Local Network permission, and the panel + bot inherit it. (Verified on this Mac:
+     launchd = no response; `node panel.js` in Terminal = works.)
+   - Check: System Settings → Privacy & Security → **Local Network** → Terminal is on.
+   - If macOS asks whether `node` may accept incoming connections: **Allow**.
 6. **Check:**
    - On the Mac, `curl -s http://127.0.0.1:3100/api/status` should return JSON.
    - From the phone, open `http://100.105.229.26:3100`, then Share → Add to Home Screen.
@@ -77,12 +79,13 @@ Work through these in order and report what you find.
 1. **Is the panel the new version and running?**
    ```
    git pull
-   launchctl kickstart -k gui/$(id -u)/com.wnbot.panel
-   launchctl print gui/$(id -u)/com.wnbot.panel | grep -E 'state|last exit|pid'
-   cat panel-out.txt; cat panel-err.txt
+   lsof -iTCP:3100 -sTCP:LISTEN     # which process serves the panel?
    ```
-   - `panel-err.txt` shows `EPERM` / `Operation not permitted`: it's the TCC folder problem
-     (step 1 of Setup).
+   - Panel started by launchd (old install), or the page says "server stopped responding": it's
+     **Local Network privacy**. Run `./install-panel-mac.sh` (removes the launchd agent, uses the
+     Terminal login item).
+   - After `git pull`, restart the panel: close the "Giveaway Panel" Terminal window and
+     double-click `Start Panel.command`.
    - `EADDRINUSE`: another panel is already on :3100. Find it with `lsof -i :3100` and stop it.
 2. **What does the panel say?** Call the API directly:
    ```
@@ -110,9 +113,8 @@ Work through these in order and report what you find.
      missing. Check `passcode.txt`.
    - `expected to read Bark but got "Whatnot"`: the session isn't tied to Bark. The bot handles this
      with `useApp`/`ensureApp`; make sure the code is up to date (`git pull`).
-5. **launchd environment:** the panel runs with launchd's minimal environment. `install-panel-mac.sh`
-   writes the absolute `node` path into the plist. If Node was installed/moved afterwards, run
-   `./install-panel-mac.sh` again.
+5. **Bot can't reach the iPhone, but `curl` from Terminal can:** same Local Network privacy issue.
+   The bot must be started by a panel that runs in Terminal (or run by hand in Terminal).
 
 ## Useful commands
 - Panel log: `tail -f panel-out.txt panel-err.txt`
