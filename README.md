@@ -31,6 +31,19 @@ The free Apple ID signature expires after **7 days**; when it does, repeat step 
   stops. On the Mac, `./wda-keepalive.sh` restarts it automatically as soon as the phone is
   reachable again.
 
+### Running everything on the Mac (always on)
+1. In the repo folder, create the files that are deliberately not in git:
+   ```
+   echo 2408 > passcode.txt            # your iPhone passcode
+   echo 192.168.2.161 > phone-ip.txt   # iPhone on home Wi-Fi
+   echo 100.91.246.93 > tailscale-ip.txt
+   ```
+2. `brew install node`, then `chmod +x *.sh && ./install-panel-mac.sh`.
+   The panel now starts automatically at login and restarts itself if it crashes.
+3. On your phone, open `http://<Mac Tailscale IP>:3100` in Safari, then
+   Share → **Add to Home Screen** to get an app icon.
+4. Run only one bot at a time. Don't also run it on the Windows PC.
+
 ## Quick start (double-click)
 - **Start iPhone (USB).bat**: on Windows with the phone plugged in. Starts WDA and the UI and opens the browser. If your bundle ID is different, edit the one at the top of the file.
 - **Start iPhone (Wi-Fi).bat**: on Windows when WDA is already running on the phone. It asks for the phone's IP the first time and remembers it in `phone-ip.txt`.
