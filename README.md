@@ -1,4 +1,120 @@
-# iphone-control
+# wn-bot
+
+## 📖 Simple guide (no technical knowledge needed)
+
+### What does this do?
+A robot that enters **Whatnot giveaways** for you, on your iPhone.
+
+1. You get a message in the **Bark** app: "🎁 Giveaway — streamer name".
+2. The robot sees it, opens that stream in **Whatnot**, taps the **Giveaway** box and presses
+   **Enter Giveaway**.
+3. It checks that it worked (a ✓ checkmark appears) and moves on to the next one.
+
+It **skips**:
+- 🏆 "You won" messages. Those only get noted, so you can see where you won.
+- ⚠️ "Watcher …" messages. Those are just status messages, not giveaways.
+
+It **never** taps "Bid" or buys anything. It only presses the giveaway button.
+
+### What needs to be on for it to work?
+Think of it as three pieces that all have to be switched on:
+
+| Piece | Where | What it does |
+|---|---|---|
+| 1. **The iPhone** | Your phone | Does the actual tapping. Bark and Whatnot must be logged in. |
+| 2. **"wda-keepalive" window** | Mac, Terminal | The "remote control connection" from the Mac to the iPhone. |
+| 3. **"Giveaway Panel" window** | Mac, Terminal | The control panel you open on your phone. |
+
+The two Terminal windows on the Mac **must stay open**. You can minimise them (yellow button,
+top left), but **don't close them** and **don't type in them**. The Mac must stay on.
+
+### Every day: starting and stopping
+1. On your phone, open the panel: **http://100.105.229.26:3100**
+   (tip: in Safari, Share → **Add to Home Screen** gives you an app icon).
+2. Press **Start**: the robot starts working.
+3. Press **Stop**: it stops after finishing what it's doing.
+
+What you see in the panel:
+- **Bot: running**: the robot is on.
+- **Phone: reachable**: the Mac can reach your iPhone.
+- **The numbers**: how many giveaways it entered, how many were already entered, how many were
+  skipped, and how many 🏆 wins.
+- **Log**: what it's doing right now. Green = entered, gold = win, orange = a problem.
+
+It's normal for it to be quiet for a while: it only does something when a new 🎁 message
+arrives in Bark.
+
+**Note:** while the robot is running, it uses your iPhone's screen. It switches between Bark and
+Whatnot by itself, so you can't really use your phone at the same time. Press **Stop** if you
+need your phone.
+
+### Something isn't working: what to do
+Work through this list from top to bottom:
+
+**The panel won't load on my phone**
+- Is **Tailscale** on, on your phone? (Tailscale app → "Connected")
+- Is the **Mac** on and awake?
+- Is the **"Giveaway Panel"** window still open on the Mac? If not: double-click
+  **Start Panel.command** in the `Dev/wn-bot` folder.
+
+**The panel says "Phone: not reachable"**
+- Is the **"wda-keepalive"** window still open on the Mac? If not, open Terminal and type:
+  ```
+  cd ~/Dev/wn-bot
+  WDA_DIR=~/WebDriverAgent ./wda-keepalive.sh
+  ```
+  Wait until it says `running`. Keep your iPhone **unlocked** and preferably plugged into the Mac.
+- Are you **away from home**? Then it doesn't work yet (see "Away from home" below).
+
+**The log says "Not authorized for performing UI testing action"**
+- The connection to the iPhone got "stuck". Fix:
+  1. In the wda-keepalive window, press **Ctrl+C**.
+  2. Restart your **iPhone** and unlock it.
+  3. Start the wda-keepalive window again (see above).
+  4. In the panel: **Stop**, then **Start**.
+
+**It doesn't enter anything**
+- Is there a **new** 🎁 message in Bark? Old messages are skipped on purpose.
+- Look at the log: "skipped" means the giveaway was already over or didn't load in time.
+  That happens sometimes.
+
+**Still stuck?** Restart everything, in this order:
+1. Close both Terminal windows on the Mac.
+2. Restart the iPhone and unlock it.
+3. Start **wda-keepalive** (see above) and wait for `running`.
+4. Double-click **Start Panel.command**.
+5. In the panel on your phone: **Start**.
+
+### Once a week: renewing the "permission slip"
+The robot runs on the iPhone with a kind of permission slip from Apple. With a free Apple
+account, that slip is only valid for **7 days**. If it suddenly stops working after a week and
+restarting doesn't help:
+1. Plug your iPhone into the Mac.
+2. Open **Xcode**, then **WebDriverAgent** (in the `WebDriverAgent` folder in your home folder).
+3. At the top, choose **WebDriverAgentRunner** and your iPhone, then press **Cmd+U**.
+4. Once it's running, press the **stop button ■** in Xcode and start the wda-keepalive window
+   again.
+
+(With a paid Apple Developer account, $99/year, the slip lasts a full year.)
+
+### Away from home
+For now it only works while your iPhone is on your **home Wi-Fi**. As soon as you leave home,
+the Mac loses its connection to the iPhone and the robot stops. When you get home, it starts
+again by itself (as long as the wda-keepalive window is open). A fix for "away from home" is
+being tested with **RoamRun** (see `MAC-WORKAROUNDS.md`).
+
+### Important rules
+- Run the robot on **one** computer only (the Mac). Never on the Windows PC at the same time.
+- Never share `passcode.txt` and never put it on GitHub. It contains your iPhone passcode.
+- The robot unlocks your phone itself with that passcode. If you change your passcode, also
+  update it on the Mac:
+  ```
+  cd ~/Dev/wn-bot && printf '%s' 'NEW CODE' > passcode.txt
+  ```
+
+---
+
+# Technical documentation
 
 Control an iPhone from Windows or macOS through [WebDriverAgent](https://github.com/appium/WebDriverAgent) (WDA). It gives you:
 - a live remote-control web UI (click to tap, drag to swipe, type, Home/Lock/Volume buttons);
