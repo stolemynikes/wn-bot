@@ -185,7 +185,7 @@ function takeLock() {
 async function connect() {
   for (let i = 0; !stopping; i++) {
     try {
-      log(`Connected via ${await wda.pickUrl()}`);
+      const via = await wda.pickUrl();
       // Session tied to Bark: reads Bark while it's in front, and whatever app is in front otherwise.
       // (Opening Bark needs the phone unlocked.)
       await wda.unlockWithPasscode();
@@ -193,6 +193,7 @@ async function connect() {
       // Live video never goes idle; don't let WDA wait for that before each command.
       // Also throttle the screen stream (only used by the control page) so it doesn't slow the phone.
       await wda.settings({ waitForIdleTimeout: 0, animationCoolOffTimeout: 0, mjpegServerFramerate: 2, mjpegScalingFactor: 25 });
+      log(`Connected via ${via}`);
       return true;
     } catch (e) {
       if (i % 6 === 0) log(`Can't reach the phone yet: ${e.message.slice(0, 120)} (retrying every 10s)`);

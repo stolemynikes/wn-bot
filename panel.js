@@ -21,6 +21,8 @@ const WDA_URLS = [readFirstLine('phone-ip.txt'), readFirstLine('tailscale-ip.txt
 // ---- bot process ------------------------------------------------------------
 let child = null;      // bot started by this panel
 let startedAt = null;
+let lastExit = null;   // why the bot last stopped: { code, at, output }
+const BOT_OUT = path.join(DIR, 'bot-out.txt'); // the bot's console output, incl. crashes
 
 function lockedPid() {
   try {
@@ -32,13 +34,28 @@ function lockedPid() {
 
 function startBot() {
   if (child || lockedPid()) return 'already running';
-  child = fork(path.join(DIR, 'giveaway-bot.js'), [], {
-    cwd: DIR,
-    env: { ...process.env, WDA_URL: WDA_URLS.join(','), MATCH: process.env.MATCH || 'Giveaway' },
-    stdio: ['ignore', 'ignore', 'ignore', 'ipc'], // the bot writes its own log file
-  });
+  if (!WDA_URLS.length) return 'cannot start: phone-ip.txt / tailscale-ip.txt missing';
+  const out = fs.openSync(BOT_OUT, 'w');
+  try {
+    child = fork(path.join(DIR, 'giveaway-bot.js'), [], {
+      cwd: DIR,
+      env: { ...process.env, WDA_URL: WDA_URLS.join(','), MATCH: process.env.MATCH || 'Giveaway' },
+      stdio: ['ignore', out, out, 'ipc'], // console output (incl. crash messages) -> bot-out.txt
+    });
+  } catch (e) {
+    fs.closeSync(out);
+    return 'failed to start: ' + e.message;
+  }
   startedAt = Date.now();
-  child.on('exit', () => { child = null; startedAt = null; });
+  lastExit = null;
+  child.on('error', (e) => { lastExit = { code: null, at: Date.now(), output: 'spawn error: ' + e.message }; });
+  child.on('exit', (code, signal) => {
+    let output = '';
+    try { output = fs.readFileSync(BOT_OUT, 'utf8').trim().split(/\r?\n/).slice(-8).join('\n'); } catch {}
+    lastExit = { code: code ?? signal, at: Date.now(), output };
+    child = null; startedAt = null;
+    fs.closeSync(out);
+  });
   return 'started';
 }
 
@@ -79,7 +96,7 @@ function logTail() {
 async function status() {
   const pid = child?.pid || lockedPid();
   return {
-    bot: { running: !!pid, pid, byPanel: !!child, since: startedAt },
+    bot: { running: !!pid, pid, byPanel: !!child, since: startedAt, lastExit },
     phone: await phoneStatus(),
     ...logTail(),
   };

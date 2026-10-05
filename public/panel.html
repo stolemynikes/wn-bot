@@ -55,6 +55,7 @@
   #log .win { color: var(--win); font-weight: 700; }
   #log .problem { color: var(--warn); }
   .hint { font-size: 13px; color: var(--muted); }
+  #exit { margin: 0; color: var(--bad); white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 </style>
 </head>
 <body>
@@ -72,6 +73,7 @@
     <button id="stop">Stop</button>
   </div>
   <div id="msg"></div>
+  <pre id="exit" class="card" hidden></pre>
 
   <div class="card stats">
     <div class="stat"><b id="s-entered">–</b><span>entered</span></div>
@@ -104,6 +106,10 @@ async function refresh() {
     else if (s.phone.locked === false) pill($('lock'), 'unlocked', 'ok');
     else pill($('lock'), 'unknown', 'warn');
     if (!busy) { $('start').disabled = b.running; $('stop').disabled = !b.running; }
+    const ex = b.lastExit;
+    $('exit').hidden = b.running || !ex || ex.code === 0;
+    if (ex && ex.code !== 0) $('exit').textContent =
+      `Bot stopped (exit ${ex.code}) at ${new Date(ex.at).toLocaleTimeString()}\n${ex.output || '(no output)'}`;
     for (const k of ['entered', 'already', 'skipped', 'wins']) $('s-' + k).textContent = s.stats[k];
     $('log').replaceChildren(...s.lines.slice().reverse().map((l) => {
       const d = document.createElement('div');

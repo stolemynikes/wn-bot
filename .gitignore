@@ -12,6 +12,7 @@ giveaway-seen.json
 giveaway-log.txt
 giveaway-bot.pid
 panel-out.txt
+bot-out.txt
 panel-err.txt
 debug/
 screenshot.png
