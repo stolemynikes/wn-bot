@@ -1,0 +1,20 @@
+# Secrets / personal - never commit
+passcode.txt
+phone-ip.txt
+tailscale-ip.txt
+
+# go-ios: tunnel private key + downloaded Apple developer disk images
+selfIdentity.plist
+devimages/
+
+# Runtime state and logs
+giveaway-seen.json
+giveaway-log.txt
+giveaway-bot.pid
+panel-out.txt
+panel-err.txt
+debug/
+screenshot.png
+
+node_modules/
+.DS_Store

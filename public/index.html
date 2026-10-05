@@ -1,0 +1,148 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>iPhone Control</title>
+<style>
+  body { margin: 0; font: 14px system-ui, sans-serif; background: #1e1e1e; color: #ddd; display: flex; gap: 20px; padding: 20px; }
+  #wrap { position: relative; }
+  #screen { height: 90vh; border-radius: 28px; border: 6px solid #333; cursor: crosshair; user-select: none; -webkit-user-drag: none; display: block; background: #000; }
+  #panel { display: flex; flex-direction: column; gap: 8px; min-width: 200px; }
+  button { padding: 8px 12px; background: #333; color: #ddd; border: 1px solid #555; border-radius: 6px; cursor: pointer; }
+  button:hover { background: #444; }
+  input { padding: 6px; background: #2a2a2a; color: #ddd; border: 1px solid #555; border-radius: 6px; }
+  #log { font: 12px monospace; color: #aaa; white-space: pre-wrap; max-height: 40vh; overflow: auto; }
+  .row { display: flex; gap: 6px; }
+  .row button { flex: 1; }
+  .hint { font-size: 12px; color: #999; }
+  #screen { touch-action: none; }
+</style>
+</head>
+<body>
+<div id="wrap"><img id="screen" alt="waiting for stream..."></div>
+<div id="panel">
+  <button data-cmd="home">Home</button>
+  <div class="row"><button data-cmd="lock">Lock</button><button data-cmd="unlock">Unlock</button></div>
+  <div class="row"><button data-btn="volumeDown">Vol -</button><button data-btn="volumeUp">Vol +</button></div>
+  <div class="row"><button data-swipe="up">Swipe ↑</button><button data-swipe="down">Swipe ↓</button></div>
+  <div class="row"><button data-swipe="left">Swipe ←</button><button data-swipe="right">Swipe →</button></div>
+  <div class="row"><button data-swipe="notif">Notifications</button><button data-swipe="cc">Control Ctr</button></div>
+  <button data-swipe="appsw">App switcher</button>
+  <div class="hint">Keyboard: arrow keys scroll / change page, Esc = Home.<br>Mouse: click = tap, drag = swipe, wheel = scroll.</div>
+  <input id="text" placeholder="Type text, press Enter">
+  <label>Stream quality
+    <select id="quality">
+      <option value="30,60" selected>Smooth (30% size, max fps)</option>
+      <option value="50,60">Balanced (50% size, max fps)</option>
+      <option value="100,60">Sharp (100% size, max fps)</option>
+      <option value="25,10">Low bandwidth (25%, 10fps)</option>
+    </select>
+  </label>
+  <button id="reload">Reconnect stream</button>
+  <div id="log"></div>
+</div>
+<script>
+const img = document.getElementById('screen');
+const logEl = document.getElementById('log');
+let size = null;
+const log = (m) => { logEl.textContent = m + '\n' + logEl.textContent.slice(0, 2000); };
+
+async function api(name, body) {
+  const r = await fetch('/api/' + name, { method: 'POST', body: JSON.stringify(body || {}) });
+  const j = await r.json();
+  if (!r.ok) { log('ERR ' + name + ': ' + j.error); throw new Error(j.error); }
+  return j;
+}
+
+async function init() {
+  const cfg = await api('config');
+  img.src = cfg.mjpegUrl + '?t=' + Date.now();
+  try { size = await api('size'); log(`Connected to ${cfg.wdaUrl}, screen ${size.width}x${size.height} pt`); }
+  catch { log('Could not reach WDA at ' + cfg.wdaUrl); }
+}
+
+// Convert a mouse event on the image to device points.
+function toDevice(e) {
+  const r = img.getBoundingClientRect();
+  return { x: (e.clientX - r.left) / r.width * size.width, y: (e.clientY - r.top) / r.height * size.height };
+}
+
+// Pointer capture keeps tracking the drag even if the mouse leaves the image.
+let down = null;
+img.addEventListener('dragstart', e => e.preventDefault());
+img.addEventListener('pointerdown', e => {
+  if (!size || e.button !== 0) return;
+  e.preventDefault();
+  img.setPointerCapture(e.pointerId);
+  down = { ...toDevice(e), t: Date.now() };
+});
+img.addEventListener('pointerup', e => {
+  if (!down) return;
+  const start = down; down = null;
+  const end = toDevice(e);
+  const clamp = (v, max) => Math.min(Math.max(v, 1), max - 1);
+  end.x = clamp(end.x, size.width); end.y = clamp(end.y, size.height);
+  if (Math.hypot(end.x - start.x, end.y - start.y) < 8) {
+    api('tap', { x: start.x, y: start.y }).then(() => log(`tap ${start.x|0},${start.y|0}`));
+  } else {
+    const ms = Math.min(Math.max(Date.now() - start.t, 150), 1000);
+    api('swipe', { x1: start.x, y1: start.y, x2: end.x, y2: end.y, ms })
+      .then(() => log(`swipe ${start.x|0},${start.y|0} -> ${end.x|0},${end.y|0}`));
+  }
+});
+
+// Fixed swipes relative to screen size. Names are the finger direction.
+function swipeDir(dir) {
+  if (!size) return;
+  const { width: w, height: h } = size;
+  const s = {
+    up:    [w/2, h*0.75, w/2, h*0.25],   // scrolls content down
+    down:  [w/2, h*0.25, w/2, h*0.75],   // scrolls content up
+    left:  [w*0.85, h/2, w*0.15, h/2],   // next page
+    right: [w*0.15, h/2, w*0.85, h/2],   // previous page / back
+    notif: [w*0.3, 2, w*0.3, h*0.6],     // notification centre
+    cc:    [w-20, 2, w-20, h*0.6],       // control centre
+    appsw: [w/2, h-2, w/2, h*0.55, 600], // app switcher (slow swipe up from bottom)
+  }[dir];
+  api('swipe', { x1: s[0], y1: s[1], x2: s[2], y2: s[3], ms: s[4] || 250 }).then(() => log('swipe ' + dir));
+}
+document.querySelectorAll('[data-swipe]').forEach(b => b.onclick = () => swipeDir(b.dataset.swipe));
+
+// One action at a time for wheel/keys, so holding a key doesn't flood the phone.
+let busy = false;
+function throttled(fn) {
+  if (busy) return;
+  busy = true; setTimeout(() => busy = false, 400);
+  fn();
+}
+
+// Mouse wheel scrolls.
+img.addEventListener('wheel', e => {
+  e.preventDefault();
+  throttled(() => swipeDir(e.deltaY > 0 ? 'up' : 'down'));
+}, { passive: false });
+
+// Arrow keys work like browser scrolling: Down = scroll down, Right = next page. Esc = Home.
+const keyMap = { ArrowDown: 'up', ArrowUp: 'down', ArrowRight: 'left', ArrowLeft: 'right' };
+document.addEventListener('keydown', e => {
+  if (e.target.matches('input, select, textarea')) return;
+  if (keyMap[e.key]) { e.preventDefault(); throttled(() => swipeDir(keyMap[e.key])); }
+  else if (e.key === 'Escape') { e.preventDefault(); throttled(() => api('home').then(() => log('home'))); }
+});
+
+document.querySelectorAll('[data-cmd]').forEach(b => b.onclick = () => api(b.dataset.cmd).then(() => log(b.dataset.cmd)));
+document.querySelectorAll('[data-btn]').forEach(b => b.onclick = () => api('button', { name: b.dataset.btn }));
+document.getElementById('text').addEventListener('keydown', e => {
+  if (e.key === 'Enter') { api('keys', { text: e.target.value }); e.target.value = ''; }
+});
+document.getElementById('quality').onchange = e => {
+  const [scale, fps] = e.target.value.split(',').map(Number);
+  api('quality', { scale, fps }).then(() => { log('quality ' + e.target.value); img.src = img.src.split('?')[0] + '?t=' + Date.now(); });
+};
+document.getElementById('reload').onclick = init;
+// Apply the selected stream quality on load (WDA's own default is a slow 10fps).
+const quality = document.getElementById('quality');
+init().then(() => size && quality.onchange({ target: quality }));
+</script>
+</body>
+</html>

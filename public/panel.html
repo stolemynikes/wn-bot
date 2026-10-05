@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Giveaways">
+<title>Giveaway Bot</title>
+<style>
+  :root {
+    --bg: #f4f4f6; --card: #ffffff; --text: #18181b; --muted: #6b6b76; --line: #e4e4e9;
+    --ok: #15803d; --ok-bg: #dcfce7; --warn: #b45309; --warn-bg: #fef3c7; --bad: #b91c1c; --bad-bg: #fee2e2;
+    --accent: #2563eb; --win: #a16207;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f0f12; --card: #1a1a1f; --text: #f4f4f5; --muted: #9a9aa5; --line: #2a2a31;
+      --ok: #4ade80; --ok-bg: #12301d; --warn: #fbbf24; --warn-bg: #33270b; --bad: #f87171; --bad-bg: #3a1414;
+      --accent: #60a5fa; --win: #facc15;
+      color-scheme: dark;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    padding: calc(env(safe-area-inset-top, 0px) + 16px) 16px calc(env(safe-area-inset-bottom, 0px) + 24px);
+  }
+  main { max-width: 560px; margin: 0 auto; display: flex; flex-direction: column; gap: 12px; }
+  h1 { font-size: 22px; margin: 4px 0 4px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .row + .row { margin-top: 10px; }
+  .label { color: var(--muted); }
+  .pill { font-size: 13px; font-weight: 600; padding: 3px 10px; border-radius: 999px; white-space: nowrap; }
+  .ok { color: var(--ok); background: var(--ok-bg); }
+  .warn { color: var(--warn); background: var(--warn-bg); }
+  .bad { color: var(--bad); background: var(--bad-bg); }
+  .buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  button {
+    font: inherit; font-weight: 600; font-size: 17px; padding: 14px; border-radius: 12px; border: 0;
+    cursor: pointer; -webkit-tap-highlight-color: transparent;
+  }
+  button:disabled { opacity: .4; }
+  #start { background: var(--ok); color: var(--card); }
+  #stop { background: var(--bad); color: var(--card); }
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; text-align: center; }
+  .stat b { display: block; font-size: 22px; font-variant-numeric: tabular-nums; }
+  .stat span { font-size: 12px; color: var(--muted); }
+  #msg { min-height: 20px; color: var(--muted); font-size: 14px; text-align: center; }
+  #log { font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; max-height: 50vh; overflow: auto; }
+  #log div { padding: 2px 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+  #log .entered { color: var(--ok); }
+  #log .win { color: var(--win); font-weight: 700; }
+  #log .problem { color: var(--warn); }
+  .hint { font-size: 13px; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <h1>🎁 Giveaway Bot</h1>
+
+  <div class="card">
+    <div class="row"><span class="label">Bot</span><span id="bot" class="pill warn">…</span></div>
+    <div class="row"><span class="label">Phone (WebDriverAgent)</span><span id="phone" class="pill warn">…</span></div>
+    <div class="row"><span class="label">Screen</span><span id="lock" class="pill warn">…</span></div>
+  </div>
+
+  <div class="buttons">
+    <button id="start">Start</button>
+    <button id="stop">Stop</button>
+  </div>
+  <div id="msg"></div>
+
+  <div class="card stats">
+    <div class="stat"><b id="s-entered">–</b><span>entered</span></div>
+    <div class="stat"><b id="s-already">–</b><span>already in</span></div>
+    <div class="stat"><b id="s-skipped">–</b><span>skipped</span></div>
+    <div class="stat"><b id="s-wins">–</b><span>wins 🏆</span></div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="margin-bottom:8px"><b>Log</b><span class="hint">newest first · refreshes every 5s</span></div>
+    <div id="log"></div>
+  </div>
+
+  <p class="hint">If the phone shows <b>not reachable</b>, WebDriverAgent isn't running: restart it on the Mac (Xcode → Cmd+U).
+  While the bot runs it uses the phone's screen.</p>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const pill = (el, text, cls) => { el.textContent = text; el.className = 'pill ' + cls; };
+let busy = false;
+
+async function refresh() {
+  try {
+    const s = await fetch('/api/status', { cache: 'no-store' }).then((r) => r.json());
+    const b = s.bot;
+    pill($('bot'), b.running ? 'running' : 'stopped', b.running ? 'ok' : 'warn');
+    if (s.phone.reachable) pill($('phone'), 'reachable · ' + s.phone.via, 'ok');
+    else pill($('phone'), 'not reachable', 'bad');
+    if (s.phone.locked === true) pill($('lock'), 'locked', 'warn');
+    else if (s.phone.locked === false) pill($('lock'), 'unlocked', 'ok');
+    else pill($('lock'), 'unknown', 'warn');
+    if (!busy) { $('start').disabled = b.running; $('stop').disabled = !b.running; }
+    for (const k of ['entered', 'already', 'skipped', 'wins']) $('s-' + k).textContent = s.stats[k];
+    $('log').replaceChildren(...s.lines.slice().reverse().map((l) => {
+      const d = document.createElement('div');
+      d.textContent = l;
+      if (/ENTERED/.test(l)) d.className = 'entered';
+      else if (/WIN:/.test(l)) d.className = 'win';
+      else if (/skipped|unconfirmed|Error|Can't reach/.test(l)) d.className = 'problem';
+      return d;
+    }));
+  } catch {
+    pill($('bot'), 'panel offline', 'bad');
+  }
+}
+
+async function act(what) {
+  busy = true; $('start').disabled = $('stop').disabled = true;
+  try {
+    const r = await fetch('/api/' + what, { method: 'POST' }).then((r) => r.json());
+    $('msg').textContent = r.result || r.error;
+  } catch (e) { $('msg').textContent = 'Failed: ' + e.message; }
+  busy = false;
+  setTimeout(refresh, 800);
+}
+$('start').onclick = () => act('start');
+$('stop').onclick = () => act('stop');
+refresh();
+setInterval(refresh, 5000);
+</script>
+</body>
+</html>

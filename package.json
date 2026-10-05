@@ -1,0 +1,11 @@
+{
+  "name": "iphone-control",
+  "version": "1.0.0",
+  "description": "Remote-control and automate an iPhone via WebDriverAgent from Windows or macOS",
+  "private": true,
+  "scripts": {
+    "start": "node server.js",
+    "example": "node example.js"
+  },
+  "engines": { "node": ">=18" }
+}
