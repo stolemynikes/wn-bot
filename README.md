@@ -34,7 +34,7 @@ The free Apple ID signature expires after **7 days**; when it does, repeat step 
 ### Running everything on the Mac (always on)
 1. In the repo folder, create the files that are deliberately not in git:
    ```
-   echo 2408 > passcode.txt            # your iPhone passcode
+   echo YOUR_PASSCODE > passcode.txt   # your iPhone passcode (never commit this)
    echo 192.168.2.161 > phone-ip.txt   # iPhone on home Wi-Fi
    echo 100.91.246.93 > tailscale-ip.txt
    ```
