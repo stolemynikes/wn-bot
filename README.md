@@ -46,6 +46,64 @@ The free Apple ID signature expires after **7 days**; when it does, repeat step 
    Share → **Add to Home Screen** to get an app icon.
 4. Run only one bot at a time. Don't also run it on the Windows PC.
 
+### Starting by hand on the Mac (if the panel isn't running)
+Is the panel running? On the Mac:
+```
+curl -s http://127.0.0.1:3100/api/status | head -c 100
+```
+No response means it isn't running. Start it one of these ways:
+- **Double-click** `Start Panel.command` in Finder (`~/Dev/wn-bot`). A Terminal window titled
+  "Giveaway Panel" opens; leave it open.
+- **Or in Terminal:**
+  ```
+  cd ~/Dev/wn-bot
+  ./"Start Panel.command"      # keeps restarting the panel; Ctrl+C to stop
+  ```
+- **Or just the panel once** (no auto-restart): `cd ~/Dev/wn-bot && node panel.js`
+
+The bot itself is started from the panel (Start on your phone). To run it by hand without the
+panel, e.g. to see errors directly:
+```
+cd ~/Dev/wn-bot
+WDA_URL=http://192.168.2.161:8100,http://100.91.246.93:8100 node giveaway-bot.js
+```
+Ctrl+C stops it after the current step (press twice to stop immediately).
+
+Panel opens but the phone isn't reachable? WebDriverAgent isn't running. Check with
+`curl -s http://192.168.2.161:8100/status`, and start it with
+`WDA_DIR=~/WebDriverAgent ./wda-keepalive.sh` (in its own Terminal window).
+
+Stuck? Look at `panel-out.txt`, `bot-out.txt` and `giveaway-log.txt` in the repo folder.
+
+### Keeping it running without an open Terminal window (tmux) — test first
+**Why not a normal background service?** macOS (15+) blocks launchd services from reaching
+devices on your network (Local Network privacy). The panel then gives "server stopped responding".
+
+**What works around it:** tmux, a program that keeps a Terminal session running in the
+background after you close the window. Because you start it *from* Terminal, it should keep
+Terminal's network permission. This hasn't been tested on this Mac yet.
+
+```
+brew install tmux                # once
+cd ~/Dev/wn-bot
+./panel-bg.sh start              # start in the background, then you can close Terminal
+./panel-bg.sh status             # is it running?
+./panel-bg.sh attach             # look at the console (back out with Ctrl+B, then D)
+./panel-bg.sh stop               # stop panel + bot
+```
+
+**Testing it:**
+1. Close the "Giveaway Panel" window if it's open.
+2. Run `./panel-bg.sh start`, then quit Terminal completely (Cmd+Q).
+3. Open the panel on your phone and press Start. If the bot shows "Connected via …", it works.
+4. Doesn't work (panel doesn't load or the phone isn't reachable)? Then go back to the Terminal
+   window: `./panel-bg.sh stop` and double-click `Start Panel.command`.
+
+**After a Mac restart** tmux doesn't start by itself. The Login Item from `install-panel-mac.sh`
+then opens the Terminal window again. If you'd rather use tmux, remove that Login Item
+(`./install-panel-mac.sh uninstall`) and run `./panel-bg.sh start` once after each restart.
+Use only one of the two at a time: both want port 3100.
+
 ## Quick start (double-click)
 - **Start iPhone (USB).bat**: on Windows with the phone plugged in. Starts WDA and the UI and opens the browser. If your bundle ID is different, edit the one at the top of the file.
 - **Start iPhone (Wi-Fi).bat**: on Windows when WDA is already running on the phone. It asks for the phone's IP the first time and remembers it in `phone-ip.txt`.
