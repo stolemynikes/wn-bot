@@ -22,11 +22,24 @@ Think of it as three pieces that all have to be switched on:
 | Piece | Where | What it does |
 |---|---|---|
 | 1. **The iPhone** | Your phone | Does the actual tapping. Bark and Whatnot must be logged in. |
-| 2. **"wda-keepalive" window** | Mac, Terminal | The "remote control connection" from the Mac to the iPhone. |
-| 3. **"Giveaway Panel" window** | Mac, Terminal | The control panel you open on your phone. |
+| 2. **WDA keep-alive** | Mac, in the background | The "remote control connection" from the Mac to the iPhone. |
+| 3. **Panel** | Mac, in the background | The control panel you open on your phone. |
 
-The two Terminal windows on the Mac **must stay open**. You can minimise them (yellow button,
-top left), but **don't close them** and **don't type in them**. The Mac must stay on.
+**Switching pieces 2 and 3 on** (once, and again after a Mac restart). Open Terminal/iTerm,
+unlock your iPhone, and type:
+```
+cd ~/Dev/wn-bot
+./bg.sh start
+```
+Wait until it says **"WebDriverAgent is running"**. After that you can **close or quit
+Terminal/iTerm**: everything keeps running in the background. The Mac must stay on.
+
+Other commands (in Terminal, from `~/Dev/wn-bot`):
+- `./bg.sh status`: is everything running?
+- `./bg.sh restart`: restart everything (solves most problems)
+- `./bg.sh stop`: switch everything off
+
+(First time only: `brew install tmux`.)
 
 ### Every day: starting and stopping
 1. On your phone, open the panel: **http://100.105.229.26:3100**
@@ -54,24 +67,17 @@ Work through this list from top to bottom:
 **The panel won't load on my phone**
 - Is **Tailscale** on, on your phone? (Tailscale app → "Connected")
 - Is the **Mac** on and awake?
-- Is the **"Giveaway Panel"** window still open on the Mac? If not: double-click
-  **Start Panel.command** in the `Dev/wn-bot` folder.
+- Check on the Mac: `cd ~/Dev/wn-bot && ./bg.sh status`. Panel not running? Run `./bg.sh start`.
 
 **The panel says "Phone: not reachable"**
-- Is the **"wda-keepalive"** window still open on the Mac? If not, open Terminal and type:
-  ```
-  cd ~/Dev/wn-bot
-  WDA_DIR=~/WebDriverAgent ./wda-keepalive.sh
-  ```
-  Wait until it says `running`. Keep your iPhone **unlocked** and preferably plugged into the Mac.
+- On the Mac, with your iPhone **unlocked**: `cd ~/Dev/wn-bot && ./bg.sh restart`
 - Are you **away from home**? Then it doesn't work yet (see "Away from home" below).
 
 **The log says "Not authorized for performing UI testing action"**
 - The connection to the iPhone got "stuck". Fix:
-  1. In the wda-keepalive window, press **Ctrl+C**.
-  2. Restart your **iPhone** and unlock it.
-  3. Start the wda-keepalive window again (see above).
-  4. In the panel: **Stop**, then **Start**.
+  1. Restart your **iPhone** and unlock it.
+  2. On the Mac: `cd ~/Dev/wn-bot && ./bg.sh restart`
+  3. In the panel: **Stop**, then **Start**.
 
 **It doesn't enter anything**
 - Is there a **new** 🎁 message in Bark? Old messages are skipped on purpose.
@@ -79,11 +85,10 @@ Work through this list from top to bottom:
   That happens sometimes.
 
 **Still stuck?** Restart everything, in this order:
-1. Close both Terminal windows on the Mac.
-2. Restart the iPhone and unlock it.
-3. Start **wda-keepalive** (see above) and wait for `running`.
-4. Double-click **Start Panel.command**.
-5. In the panel on your phone: **Start**.
+1. On the Mac: `cd ~/Dev/wn-bot && ./bg.sh stop`
+2. Restart the iPhone and unlock it (preferably plugged into the Mac).
+3. On the Mac: `./bg.sh start` and wait for "WebDriverAgent is running".
+4. In the panel on your phone: **Start**.
 
 ### Once a week: renewing the "permission slip"
 The robot runs on the iPhone with a kind of permission slip from Apple. With a free Apple
@@ -92,15 +97,15 @@ restarting doesn't help:
 1. Plug your iPhone into the Mac.
 2. Open **Xcode**, then **WebDriverAgent** (in the `WebDriverAgent` folder in your home folder).
 3. At the top, choose **WebDriverAgentRunner** and your iPhone, then press **Cmd+U**.
-4. Once it's running, press the **stop button ■** in Xcode and start the wda-keepalive window
-   again.
+4. Once it's running, press the **stop button ■** in Xcode, then in Terminal:
+   `cd ~/Dev/wn-bot && ./bg.sh restart`.
 
 (With a paid Apple Developer account, $99/year, the slip lasts a full year.)
 
 ### Away from home
 For now it only works while your iPhone is on your **home Wi-Fi**. As soon as you leave home,
 the Mac loses its connection to the iPhone and the robot stops. When you get home, it starts
-again by itself (as long as the wda-keepalive window is open). A fix for "away from home" is
+again by itself (as long as `./bg.sh` is running on the Mac). A fix for "away from home" is
 being tested with **RoamRun** (see `MAC-WORKAROUNDS.md`).
 
 ### Important rules
