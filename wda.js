@@ -226,6 +226,9 @@ module.exports = {
   openUrl: (url) => s('POST', '/url', { url }),
   // using: 'accessibility id' | 'class name' | 'xpath' | '-ios predicate string' | '-ios class chain'
   find: (using, value) => s('POST', '/element', { using: locator(using), value }).then(elementId),
+  // All matching element ids (empty array if none).
+  findAll: (using, value) => s('POST', '/elements', { using: locator(using), value })
+    .then((els) => (els || []).map(elementId)).catch(() => []),
   // Like find, but returns null instead of throwing when the element isn't there.
   tryFind: (using, value) => s('POST', '/element', { using: locator(using), value }).then(elementId).catch(() => null),
   // Keep looking for an element until it shows up; returns its id, or null after `timeout` ms.
@@ -240,6 +243,7 @@ module.exports = {
   },
   click: (elementId) => s('POST', `/element/${elementId}/click`),
   rect: (elementId) => s('GET', `/element/${elementId}/rect`), // { x, y, width, height }
+  attr: (elementId, name) => s('GET', `/element/${elementId}/attribute/${name}`),
   screenshot: () => call('GET', '/screenshot').then(b64 => Buffer.from(b64, 'base64')),
   source: () => s('GET', '/source'),
   settings: (settings) => s('POST', '/appium/settings', { settings }),

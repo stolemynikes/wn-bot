@@ -102,11 +102,36 @@ async function saveDebug(msg) {
     fs.writeFileSync(base + '.png', await wda.screenshot());
     const src = await wda.source();
     const tileLines = src.split('\n').filter((l) => /x="3[3-9]\d"|x="4[01]\d"/.test(l) && /y="(1[5-9]\d|2[0-5]\d)"/.test(l));
-    fs.writeFileSync(base + '.txt', `${msg.title}\n${msg.url}\n\n${tileLines.map((l) => l.trim()).join('\n')}\n`);
+    // Buttons in the top part of the screen: shows what might be covering the tile (e.g. a poll's ⓧ).
+    const topButtons = src.split('\n').filter((l) => /XCUIElementTypeButton/.test(l) && /y="([0-9]|[1-9]\d|[1-4]\d\d)"/.test(l));
+    fs.writeFileSync(base + '.txt', `${msg.title}\n${msg.url}\n\n-- tile area:\n${tileLines.map((l) => l.trim()).join('\n')}\n\n`
+      + `-- buttons in the top of the screen:\n${topButtons.map((l) => l.trim()).join('\n')}\n`);
   } catch (e) {
     fs.writeFileSync(base + '.txt', `${msg.title}\n${msg.url}\nerror saving debug: ${e.message}\n`);
   }
   return path.relative(__dirname, base) + '.png';
+}
+
+// Close a pop-up/overlay that covers the stream (e.g. a "NEXT BREAK" poll with an ⓧ).
+// Only taps by element NAME, only close/dismiss-style buttons, only in the top 60% of the
+// screen, and never anything that sounds like bidding, buying, paying or voting.
+const CLOSE_BUTTON = "type == 'XCUIElementTypeButton' AND ("
+  + "name CONTAINS[c] 'close' OR label CONTAINS[c] 'close' OR name CONTAINS[c] 'dismiss' OR label CONTAINS[c] 'dismiss' "
+  + "OR name CONTAINS[c] 'xmark' OR name CONTAINS[c] 'x-circle' OR name CONTAINS[c] 'x_circle' OR name ==[c] 'x'"
+  + ") AND NOT (name CONTAINS[c] 'bid' OR name CONTAINS[c] 'buy' OR name CONTAINS[c] 'pay' OR name CONTAINS[c] 'purchase' "
+  + "OR name CONTAINS[c] 'vote' OR name CONTAINS[c] 'giveaway' OR name CONTAINS[c] 'minimize' OR name CONTAINS[c] 'arrow-down')";
+let screenHeight = null;
+
+async function dismissOverlay() {
+  if (!screenHeight) screenHeight = (await wda.windowSize().catch(() => ({ height: 932 }))).height;
+  for (const id of await wda.findAll('predicate string', CLOSE_BUTTON)) {
+    const r = await wda.rect(id).catch(() => null);
+    if (!r || r.width === 0 || r.y > screenHeight * 0.6) continue;
+    const name = await wda.attr(id, 'name').catch(() => '?');
+    await wda.click(id).catch(() => {});
+    return name;
+  }
+  return null;
 }
 
 // ---- Whatnot -------------------------------------------------------------
@@ -117,11 +142,26 @@ async function enterGiveaway(msg, attempt = 1) {
   const secs = () => ((Date.now() - t0) / 1000).toFixed(1) + 's';
   await wda.openUrl(msg.url);
 
-  // Wait for the tile; things can be in the way for a while. On a retry the giveaway may
-  // already be over (the tile disappears then), so don't wait as long.
+  // Wait for the tile; things can be in the way for a while (e.g. a "NEXT BREAK" poll covering
+  // it). On a retry the giveaway may already be over (the tile disappears then), so don't wait as long.
   const timeout = attempt > 1 ? Math.min(TILE_TIMEOUT, 15000) : TILE_TIMEOUT;
-  const tile = await wda.waitFor('predicate string', TILE, { timeout, interval: 700 });
-  if (!tile) return `skipped: no Giveaway tile after ${timeout / 1000}s${attempt > 1 ? ' (giveaway probably ended)' : ''}`;
+  let tile = null;
+  let lastDismiss = 0;
+  while (Date.now() - t0 < timeout) {
+    tile = await wda.tryFind('predicate string', TILE);
+    if (tile) break;
+    // After 2s without a tile, close overlays that may cover it (every 3s at most).
+    if (Date.now() - t0 > 2000 && Date.now() - lastDismiss > 3000) {
+      lastDismiss = Date.now();
+      const closed = await dismissOverlay();
+      if (closed) log(`   closed an overlay ("${closed}") covering the stream`);
+    }
+    await wda.sleep(700);
+  }
+  if (!tile) {
+    const file = await saveDebug(msg);
+    return `skipped: no Giveaway tile after ${timeout / 1000}s${attempt > 1 ? ' (giveaway probably ended)' : ''} (saved ${file})`;
+  }
 
   // The tile's icon can load a moment after the tile itself: gift = enter, checkmark = done.
   let gift = null;
