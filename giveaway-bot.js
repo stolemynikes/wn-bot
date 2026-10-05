@@ -196,7 +196,12 @@ async function connect() {
       log(`Connected via ${via}`);
       return true;
     } catch (e) {
-      if (i % 6 === 0) log(`Can't reach the phone yet: ${e.message.slice(0, 120)} (retrying every 10s)`);
+      if (i % 6 === 0) {
+        log(`Can't reach the phone yet: ${e.message.slice(0, 120)} (retrying every 10s)`);
+        if (/Code=41|Not authorized for performing UI testing/.test(e.message))
+          log('   -> WebDriverAgent is running but iOS no longer lets it control the screen. Restart WDA on the Mac '
+            + '(wda-keepalive.sh or Xcode Cmd+U); check iPhone Settings > Developer > Enable UI Automation.');
+      }
       await wda.sleep(10000);
     }
   }

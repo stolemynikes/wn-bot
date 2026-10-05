@@ -105,10 +105,11 @@ Work through these in order and report what you find.
    `DRY_RUN=1 WDA_URL=... node giveaway-bot.js` lists how the current Bark messages are classified.
 4. **Typical bot errors:**
    - `WDA not reachable at …`: WDA isn't running (Setup step 4) or the phone is off the network.
-   - `Not authorized for performing UI testing action (XCTDaemonErrorDomain Code=41)`: WDA was just
-     restarted, or the phone was locked during startup. Unlock the phone; it usually works after a
-     few seconds. If it persists, check on the iPhone: Settings → Developer → **Enable UI Automation**
-     is on, and the developer certificate is trusted.
+   - `Not authorized for performing UI testing action (XCTDaemonErrorDomain Code=41)`: the WDA app
+     still answers `/status`, but the xcodebuild/Xcode test session that launched it has ended or lost
+     its connection, so iOS revoked UI-testing rights. Check `pgrep -fl xcodebuild`, then stop and
+     start WDA again (`wda-keepalive.sh` or Xcode Cmd+U) with the phone unlocked. If it persists:
+     iPhone Settings → Developer → **Enable UI Automation** on, and the developer certificate trusted.
    - `Could not create WDA session … unlocked`: the phone is locked and the passcode is wrong or
      missing. Check `passcode.txt`.
    - `expected to read Bark but got "Whatnot"`: the session isn't tied to Bark. The bot handles this
