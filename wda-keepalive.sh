@@ -15,6 +15,17 @@ LOG="${TMPDIR:-/tmp}/wda-keepalive.log"
 # Keep the Mac awake while this runs (display may sleep; system won't).
 caffeinate -i -w $$ &
 
+# Background jobs in a script ignore Ctrl+C, so stop xcodebuild ourselves when the script stops.
+XCB=""
+cleanup() {
+  echo
+  echo "Stopping WebDriverAgent..."
+  [ -n "$XCB" ] && kill "$XCB" 2>/dev/null
+  pkill -f "xcodebuild.*$DERIVED" 2>/dev/null
+  exit 0
+}
+trap cleanup INT TERM HUP
+
 echo "Building WebDriverAgent once (needs the phone connected/paired)..."
 until xcodebuild -project "$WDA_DIR/WebDriverAgent.xcodeproj" -scheme WebDriverAgentRunner \
     -destination "id=$UDID" -derivedDataPath "$DERIVED" -allowProvisioningUpdates \
