@@ -73,9 +73,14 @@ if (process.env.TEST_CLASSIFY) { module.exports = { classify }; return; }
 // Returns Bark messages from the history, oldest first: { key, kind, title, url }
 async function readBark() {
   await wda.activateApp(BARK);
-  const historyTab = await wda.tryFind('predicate string', "type == 'XCUIElementTypeButton' AND name == 'Message History'");
-  if (historyTab) await wda.click(historyTab);
-  const src = await wda.source();
+  let src = await wda.source();
+  // Only tap the "Message History" tab if Bark is on another tab (tapping it every round
+  // makes the screen flicker for nothing).
+  if (!/name="Message History"[^>]*XCUIElementTypeStaticText|XCUIElementTypeStaticText[^>]*name="Message History"/.test(src)
+      && !src.includes('whatnot.com')) {
+    const historyTab = await wda.tryFind('predicate string', "type == 'XCUIElementTypeButton' AND name == 'Message History'");
+    if (historyTab) { await wda.click(historyTab); src = await wda.source(); }
+  }
   const app = (src.match(/XCUIElementTypeApplication[^>]*? name="([^"]*)"/) || [])[1];
   if (app !== 'Bark') throw new Error(`expected to read Bark but got "${app}"`);
   const messages = [];

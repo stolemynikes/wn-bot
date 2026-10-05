@@ -106,10 +106,55 @@ You **don't** need to reinstall anything for normal use. Starting reuses the exi
 (With a paid Apple Developer account, $99/year, the slip lasts a full year.)
 
 ### Away from home
-For now it only works while your iPhone is on your **home Wi-Fi**. As soon as you leave home,
-the Mac loses its connection to the iPhone and the robot stops. When you get home, it starts
-again by itself (as long as `./bg.sh` is running on the Mac). A fix for "away from home" is
-being tested with **RoamRun** (see `MAC-WORKAROUNDS.md`).
+Normally it only works while your iPhone is on your **home Wi-Fi** (or plugged into the Mac).
+As soon as you leave home, the Mac loses its connection to the iPhone and the robot stops.
+When you get home, it starts again by itself (as long as `./bg.sh` is running on the Mac).
+
+#### Setting up "away from home" yourself with RoamRun (try it, not tested yet)
+**RoamRun** is a free Mac app that makes the Mac believe your iPhone is still at home, while the
+connection actually goes through **Tailscale**.
+
+**What you need:**
+- A Mac with an **Apple chip** (M1/M2/M3/M4). Check: Apple menu → About This Mac → "Chip".
+  On an Intel Mac, RoamRun doesn't work.
+- **Tailscale** on both the Mac and the iPhone, both logged in to the same account.
+- The iPhone has been connected to this Mac before (it has; we use it already).
+
+**Step 1: install** (at home, on the Mac, in Terminal):
+```
+brew install --cask mh-mobile/tap/roamrun
+```
+Then open **RoamRun** from your Applications folder. An icon appears in the menu bar (top right).
+
+**Step 2: add your iPhone** (at home, iPhone on home Wi-Fi and unlocked):
+- Click the RoamRun icon in the menu bar and add your iPhone (it should find it by itself).
+- Follow the app's instructions until it says your iPhone is **ready**.
+- Turn on **"Keep debugging on cellular"** in RoamRun's settings (under Network), so it keeps
+  working when your phone switches to mobile data.
+
+**Step 3: start everything through RoamRun:**
+```
+cd ~/Dev/wn-bot
+./bg.sh restart
+```
+Wait for "WebDriverAgent is running".
+
+**Step 4: test it** (don't go out the door yet):
+1. On the iPhone, turn **Wi-Fi off** (mobile data + Tailscale stay on).
+2. Wait 1 minute and look at the panel: does it still say **Phone: reachable**?
+   - **Yes:** it works away from home!
+   - **No:** turn Wi-Fi back on and run `./bg.sh restart`. Then send the last lines of
+     `wda-history.log` (in the `wn-bot` folder) to Claude.
+
+**Good to know:**
+- **Slower:** away from home every tap is slower (about 1–2 seconds). The robot still works.
+- **If the connection breaks while you're out:** RoamRun can only start it again once your iPhone
+  is on **some Wi-Fi** network (any Wi-Fi, e.g. at a friend's place or in a café). On mobile data
+  alone it can't restart the connection.
+- **Keep Tailscale on** on your phone. If iOS pauses Tailscale (e.g. Low Power Mode), the
+  connection drops.
+- **After restarting your iPhone:** plug it into the Mac once, then `./bg.sh restart`.
+- More technical details: `MAC-WORKAROUNDS.md`.
 
 ### Important rules
 - Run the robot on **one** computer only (the Mac). Never on the Windows PC at the same time.
