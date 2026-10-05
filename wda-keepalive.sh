@@ -26,6 +26,9 @@ cleanup() {
 }
 trap cleanup INT TERM HUP
 
+if ls "$DERIVED"/Build/Products/*.xctestrun >/dev/null 2>&1 && [ -z "${FORCE_BUILD:-}" ]; then
+  echo "Using the existing WebDriverAgent build (FORCE_BUILD=1 to rebuild, e.g. after renewing the signature)."
+else
 echo "Building WebDriverAgent once (needs the phone connected/paired)..."
 until xcodebuild -project "$WDA_DIR/WebDriverAgent.xcodeproj" -scheme WebDriverAgentRunner \
     -destination "id=$UDID" -derivedDataPath "$DERIVED" -allowProvisioningUpdates \
@@ -34,6 +37,7 @@ until xcodebuild -project "$WDA_DIR/WebDriverAgent.xcodeproj" -scheme WebDriverA
   sleep 60
 done
 echo "Build OK."
+fi
 
 while true; do
   echo "$(date '+%H:%M:%S') starting WebDriverAgent on $UDID ..."

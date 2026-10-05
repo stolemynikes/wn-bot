@@ -98,7 +98,10 @@ restarting doesn't help:
 2. Open **Xcode**, then **WebDriverAgent** (in the `WebDriverAgent` folder in your home folder).
 3. At the top, choose **WebDriverAgentRunner** and your iPhone, then press **Cmd+U**.
 4. Once it's running, press the **stop button ■** in Xcode, then in Terminal:
-   `cd ~/Dev/wn-bot && ./bg.sh restart`.
+   `cd ~/Dev/wn-bot && ./bg.sh stop && FORCE_BUILD=1 ./bg.sh start`
+   (`FORCE_BUILD=1` makes it build fresh with the new signature).
+
+You **don't** need to reinstall anything for normal use. Starting reuses the existing build.
 
 (With a paid Apple Developer account, $99/year, the slip lasts a full year.)
 
