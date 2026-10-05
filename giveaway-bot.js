@@ -113,24 +113,44 @@ async function saveDebug(msg) {
 }
 
 // Close a pop-up/overlay that covers the stream (e.g. a "NEXT BREAK" poll with an ⓧ).
-// Only taps by element NAME, only close/dismiss-style buttons, only in the top 60% of the
-// screen, and never anything that sounds like bidding, buying, paying or voting.
+// Only when a poll is actually on screen. Only taps by element NAME, only close/dismiss-style
+// buttons, only in the top 40% of the screen (above the chat), and never anything that sounds
+// like bidding, buying, paying or voting.
 const CLOSE_BUTTON = "type == 'XCUIElementTypeButton' AND ("
   + "name CONTAINS[c] 'close' OR label CONTAINS[c] 'close' OR name CONTAINS[c] 'dismiss' OR label CONTAINS[c] 'dismiss' "
   + "OR name CONTAINS[c] 'xmark' OR name CONTAINS[c] 'x-circle' OR name CONTAINS[c] 'x_circle' OR name ==[c] 'x'"
   + ") AND NOT (name CONTAINS[c] 'bid' OR name CONTAINS[c] 'buy' OR name CONTAINS[c] 'pay' OR name CONTAINS[c] 'purchase' "
   + "OR name CONTAINS[c] 'vote' OR name CONTAINS[c] 'giveaway' OR name CONTAINS[c] 'minimize' OR name CONTAINS[c] 'arrow-down')";
 let screenHeight = null;
+const TOP = 0.4; // polls sit high up; the chat starts at about 55% of the screen
+
+// A poll is recognised by its text (e.g. "NEXT BREAK" above the 500/250 options).
+// POLL_TEXT can override the words (comma-separated).
+const POLL_WORDS = (process.env.POLL_TEXT || 'next break,poll,vote').split(',').map((w) => w.trim()).filter(Boolean);
+const POLL_TEXT = "type == 'XCUIElementTypeStaticText' AND ("
+  + POLL_WORDS.map((w) => `name CONTAINS[c] '${w.replace(/'/g, "\\'")}'`).join(' OR ') + ')';
+
+async function findPoll() {
+  if (!screenHeight) screenHeight = (await wda.windowSize().catch(() => ({ height: 932 }))).height;
+  for (const id of await wda.findAll('predicate string', POLL_TEXT)) {
+    const r = await wda.rect(id).catch(() => null);
+    if (r && r.width > 0 && r.y < screenHeight * TOP) return (await wda.attr(id, 'name').catch(() => '')) || 'poll';
+  }
+  return null;
+}
 
 async function dismissOverlay() {
-  if (!screenHeight) screenHeight = (await wda.windowSize().catch(() => ({ height: 932 }))).height;
+  const poll = await findPoll();
+  if (!poll) return null; // nothing to close: just keep waiting for the tile
+  log(`   poll detected ("${poll}") - closing it`);
   for (const id of await wda.findAll('predicate string', CLOSE_BUTTON)) {
     const r = await wda.rect(id).catch(() => null);
-    if (!r || r.width === 0 || r.y > screenHeight * 0.6) continue;
+    if (!r || r.width === 0 || r.y > screenHeight * TOP) continue;
     const name = await wda.attr(id, 'name').catch(() => '?');
     await wda.click(id).catch(() => {});
     return name;
   }
+  log('   poll detected but no close button found (see debug/ after a skip)');
   return null;
 }
 
@@ -150,11 +170,11 @@ async function enterGiveaway(msg, attempt = 1) {
   while (Date.now() - t0 < timeout) {
     tile = await wda.tryFind('predicate string', TILE);
     if (tile) break;
-    // After 2s without a tile, close overlays that may cover it (every 3s at most).
-    if (Date.now() - t0 > 2000 && Date.now() - lastDismiss > 3000) {
+    // After 5s without a tile, check for a poll covering it and close only that (every 4s at most).
+    if (Date.now() - t0 > 5000 && Date.now() - lastDismiss > 4000) {
       lastDismiss = Date.now();
       const closed = await dismissOverlay();
-      if (closed) log(`   closed an overlay ("${closed}") covering the stream`);
+      if (closed) log(`   closed the poll ("${closed}")`);
     }
     await wda.sleep(700);
   }
