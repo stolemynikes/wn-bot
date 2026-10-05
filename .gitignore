@@ -13,6 +13,7 @@ giveaway-log.txt
 giveaway-bot.pid
 panel-out.txt
 bot-out.txt
+wda-history.log
 panel-err.txt
 debug/
 screenshot.png

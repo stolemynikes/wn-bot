@@ -11,6 +11,8 @@ WDA_DIR="${WDA_DIR:-$HOME/WebDriverAgent}"
 UDID="${1:-00008120-001818A92683C01E}"
 DERIVED="${TMPDIR:-/tmp}/wda-derived"
 LOG="${TMPDIR:-/tmp}/wda-keepalive.log"
+# Every stop is recorded here with its reason (next to this script; not in git).
+HIST="$(cd "$(dirname "$0")" && pwd)/wda-history.log"
 
 # Keep the Mac awake while this runs (display may sleep; system won't).
 caffeinate -i -w $$ &
@@ -45,16 +47,28 @@ while true; do
     -xctestrun "$(ls "$DERIVED"/Build/Products/*.xctestrun | head -1)" \
     test-without-building > "$LOG" 2>&1 &
   XCB=$!
+  STARTED=$(date +%s)
   # Report when it's up.
   for i in $(seq 1 60); do
     if grep -q 'ServerURLHere->' "$LOG" 2>/dev/null; then
       echo "$(date '+%H:%M:%S') running: $(grep -o 'ServerURLHere->[^<]*' "$LOG" | head -1 | sed 's/ServerURLHere->//')"
+      echo "$(date '+%Y-%m-%d %H:%M:%S') started OK" >> "$HIST"
       break
     fi
     kill -0 $XCB 2>/dev/null || break
     sleep 2
   done
   wait $XCB
-  echo "$(date '+%H:%M:%S') WebDriverAgent stopped - restarting in 30s (phone away? it retries until it's back)."
-  sleep 30
+  CODE=$?
+  RAN=$(( $(date +%s) - STARTED ))
+  echo "$(date '+%H:%M:%S') WebDriverAgent stopped after ${RAN}s - restarting in 15s. Reason: see $HIST"
+  # Record why it stopped: xcodebuild's error lines + the Mac's latest sleep/wake events.
+  {
+    echo "===== $(date '+%Y-%m-%d %H:%M:%S') STOPPED after ${RAN}s (xcodebuild exit $CODE)"
+    grep -iE 'error|fail|lost|interrupt|crash|terminat|disconnect|unavailable|locked|timed out|\*\* TEST' "$LOG" | tail -12
+    echo "-- Mac sleep/wake (last 3):"
+    pmset -g log 2>/dev/null | grep -E ' (Sleep|Wake|DarkWake) ' | tail -3
+    echo
+  } >> "$HIST"
+  sleep 15
 done
