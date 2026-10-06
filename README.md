@@ -47,8 +47,9 @@ Other commands (in Terminal, from `~/Dev/wn-bot`):
 2. Press **Start**. The Mac first starts the remote control on your iPhone ("Automation Running"
    appears; this can take up to a minute), then the robot starts. Keep your iPhone **unlocked**
    while it starts. If iOS asks for your **passcode "for XCTest"**, type it once.
-3. Press **Stop**: it finishes what it's doing, then switches the remote control off. "Automation
-   Running" disappears and your phone is completely normal again (no passcode prompts).
+3. Press **Stop**: the robot stops **immediately** (even in the middle of a giveaway) and the remote
+   control switches off. "Automation Running" disappears and your phone is completely normal again
+   (no passcode prompts).
 
 When you press **Start**, everything already in Bark is skipped: only giveaways that come in
 **after** Start are entered.

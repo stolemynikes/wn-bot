@@ -94,7 +94,13 @@ function startBot() {
 }
 
 function stopBot() {
-  if (child) { child.send('stop'); return 'stopping (finishes the current step, then switches WebDriverAgent off)'; }
+  if (child) {
+    const c = child;
+    try { c.send('stop'); } catch {}
+    // If it doesn't exit within 2s (e.g. stuck in a call to the phone), end it hard.
+    setTimeout(() => { if (child === c) c.kill('SIGKILL'); }, 2000);
+    return 'stopped (WebDriverAgent is switching off)';
+  }
   const pid = lockedPid();
   if (pid) { process.kill(pid); stopWda(); return 'stopped (it was started outside the panel)'; }
   if (wdaChild) { stopWda(); return 'WebDriverAgent switched off'; }

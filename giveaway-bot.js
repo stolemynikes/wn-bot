@@ -334,8 +334,11 @@ function requestStop(how) {
   log(`Stopping after the current step... (${how})`);
 }
 process.on('SIGINT', () => requestStop('Ctrl+C again to quit now'));
-// The control panel (panel.js) starts the bot as a child process and stops it with a message.
-process.on('message', (m) => { if (m === 'stop') requestStop('requested from control panel'); });
+// The control panel (panel.js) starts the bot as a child process. Stop there = stop right now,
+// even in the middle of a giveaway.
+const stopNow = (why) => { log(`Stopped (${why}).`); process.exit(0); };
+process.on('message', (m) => { if (m === 'stop') stopNow('Stop pressed in the panel'); });
+process.on('SIGTERM', () => stopNow('terminated'));
 
 // Only one bot at a time: two would fight over the phone.
 const LOCK_FILE = path.join(__dirname, 'giveaway-bot.pid');
