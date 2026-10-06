@@ -54,8 +54,8 @@ Other commands (in Terminal, from `~/Dev/wn-bot`):
 When you press **Start**, everything already in Bark is skipped: only giveaways that come in
 **after** Start are entered.
 
-To look more human, it waits a random time before opening a giveaway (2–15 seconds) and before
-pressing Enter (1–8 seconds), and it taps a slightly different spot every time.
+To look more human, it waits a random time before opening a giveaway (1–5 seconds) and before
+pressing Enter (0.5–3 seconds), and it taps a slightly different spot every time.
 
 What you see in the panel:
 - **Bot: running**: the robot is on.

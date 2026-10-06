@@ -11,8 +11,8 @@
 //   POLL=3                seconds between Bark checks when idle
 //   BACKLOG=1             at start, also handle messages already in Bark (default: skip them,
 //                         only giveaways that arrive after Start are entered)
-//   DELAY_OPEN=2-15       random wait (seconds) before tapping the Giveaway tile
-//   DELAY_ENTER=1-8       random wait (seconds) before pressing "Enter Giveaway"
+//   DELAY_OPEN=1-5        random wait (seconds) before tapping the Giveaway tile
+//   DELAY_ENTER=0.5-3     random wait (seconds) before pressing "Enter Giveaway"
 //   HUMAN=0               no random waits / tap jitter (fastest)
 
 const fs = require('fs');
@@ -59,8 +59,8 @@ const range = (env, def) => {
   const [a, b] = String(process.env[env] || def).split('-').map(Number);
   return Number.isFinite(a) && Number.isFinite(b) && b >= a ? [a, b] : def.split('-').map(Number);
 };
-const DELAY_OPEN = range('DELAY_OPEN', '2-15');   // before tapping the Giveaway tile
-const DELAY_ENTER = range('DELAY_ENTER', '1-8');  // before pressing "Enter Giveaway"
+const DELAY_OPEN = range('DELAY_OPEN', '1-5');      // before tapping the Giveaway tile
+const DELAY_ENTER = range('DELAY_ENTER', '0.5-3');  // before pressing "Enter Giveaway"
 
 // Tap somewhere inside a rectangle like a finger would: near the middle more often than at the
 // edges, never right on the edge, with a varying press time. No movement while pressed: the
