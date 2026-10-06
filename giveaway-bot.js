@@ -6,7 +6,8 @@
 // Options (env vars):
 //   MATCH=Giveaway        only enter "🎁 ..." messages whose first line contains this text
 //   DRY_RUN=1             just show how the current Bark messages are classified, then exit
-//   TILE_TIMEOUT=60       seconds to wait for the Giveaway tile before skipping
+//   TILE_TIMEOUT=90       seconds to wait for the Giveaway tile before skipping (first attempt)
+//   SPIN_TEXT=...         words that mark a spinning block hiding the tile (see SPIN_WORDS)
 //   POLL=3                seconds between Bark checks when idle
 //   BACKLOG=1             at start, also handle messages already in Bark (default: skip them,
 //                         only giveaways that arrive after Start are entered)
@@ -20,7 +21,7 @@ const wda = require('./wda');
 
 const BARK = 'me.fin.bark';
 const MATCH = (process.env.MATCH || 'Giveaway').toLowerCase();
-const TILE_TIMEOUT = Number(process.env.TILE_TIMEOUT || 60) * 1000;
+const TILE_TIMEOUT = Number(process.env.TILE_TIMEOUT || 90) * 1000;
 const POLL = Number(process.env.POLL || 3) * 1000;
 const SEEN_FILE = path.join(__dirname, 'giveaway-seen.json');
 const LOG_FILE = path.join(__dirname, 'giveaway-log.txt');
@@ -30,8 +31,23 @@ const TILE = "type == 'XCUIElementTypeStaticText' AND name == 'Giveaway'";      
 const GIFT_ICON = "type == 'XCUIElementTypeImage' AND name == 'giveaway'";      // gift icon = not entered yet
 const CHECK_ICON = "type == 'XCUIElementTypeImage' AND name == 'check-circle'"; // checkmark = entered
 const ENTER_BUTTON = "type == 'XCUIElementTypeButton' AND name == 'Enter Giveaway'";
-// "Assigning Break Spot for: <buyer>": a spinning list that hides the tile for a while (not closable).
-const BREAK_SPIN = "type == 'XCUIElementTypeStaticText' AND (name BEGINSWITH[c] 'Assigning Break Spot' OR name CONTAINS[c] 'Assigning Break Spot')";
+// White "spinning" blocks in the middle of the stream (e.g. "Assigning Break Spot for: <buyer>",
+// randomisers, wheels) hide the tile for a while and can't be closed: recognised by these words.
+// SPIN_TEXT overrides them (comma-separated).
+const SPIN_WORDS = (process.env.SPIN_TEXT || 'assigning,spinning,randomiz,picking,selecting,break spot,wheel')
+  .split(',').map((w) => w.trim()).filter(Boolean);
+const BREAK_SPIN = "type == 'XCUIElementTypeStaticText' AND ("
+  + SPIN_WORDS.map((w) => `name CONTAINS[c] '${w.replace(/'/g, "\\'")}'`).join(' OR ') + ')';
+
+// Only counts in the middle band of the screen (the block sits there; the chat is lower down).
+async function isSpinning() {
+  const h = (await wda.windowSize().catch(() => ({ height: 932 }))).height;
+  for (const id of await wda.findAll('predicate string', BREAK_SPIN)) {
+    const r = await wda.rect(id).catch(() => null);
+    if (r && r.width > 0 && r.y > h * 0.15 && r.y < h * 0.58) return true;
+  }
+  return false;
+}
 
 // Random pause between min and max seconds, so timings aren't identical every time.
 // The average of two random numbers is used, so values near the middle are more common than
@@ -132,8 +148,11 @@ async function saveDebug(msg) {
     const tileLines = src.split('\n').filter((l) => /x="3[3-9]\d"|x="4[01]\d"/.test(l) && /y="(1[5-9]\d|2[0-5]\d)"/.test(l));
     // Buttons in the top part of the screen: shows what might be covering the tile (e.g. a poll's ⓧ).
     const topButtons = src.split('\n').filter((l) => /XCUIElementTypeButton/.test(l) && /y="([0-9]|[1-9]\d|[1-4]\d\d)"/.test(l));
+    // Texts in the middle of the screen: shows what a spinning block / overlay says.
+    const midTexts = src.split('\n').filter((l) => /XCUIElementTypeStaticText/.test(l) && /y="(2[5-9]\d|[3-5]\d\d)"/.test(l));
     fs.writeFileSync(base + '.txt', `${msg.title}\n${msg.url}\n\n-- tile area:\n${tileLines.map((l) => l.trim()).join('\n')}\n\n`
-      + `-- buttons in the top of the screen:\n${topButtons.map((l) => l.trim()).join('\n')}\n`);
+      + `-- buttons in the top of the screen:\n${topButtons.map((l) => l.trim()).join('\n')}\n\n`
+      + `-- texts in the middle of the screen:\n${midTexts.map((l) => l.trim()).join('\n')}\n`);
   } catch (e) {
     fs.writeFileSync(base + '.txt', `${msg.title}\n${msg.url}\nerror saving debug: ${e.message}\n`);
   }
@@ -202,8 +221,8 @@ async function enterGiveaway(msg, attempt = 1) {
     if (tile) break;
     // "Assigning Break Spot for: <buyer>" (a spinning list of spots) hides the tile and has no
     // close button: wait it out, extending the deadline while it's on screen (max 2 min in total).
-    if (await wda.tryFind('predicate string', BREAK_SPIN)) {
-      if (!saidSpin) { log('   break spot is being assigned - waiting for it to finish...'); saidSpin = true; }
+    if (await isSpinning()) {
+      if (!saidSpin) { log('   a spinning block is hiding the tile - waiting for it to finish...'); saidSpin = true; }
       deadline = Math.min(Math.max(deadline, Date.now() + 10000), t0 + 120000);
       await wda.sleep(1500);
       continue;
@@ -266,7 +285,7 @@ async function enterGiveaway(msg, attempt = 1) {
   const isTappable = async () => {
     const id = (await wda.tryFind('predicate string', GIFT_ICON)) || (await wda.tryFind('predicate string', TILE));
     // A break-spot spin can hide the tile temporarily: that's "covered", not "gone".
-    if (!id) return (await wda.tryFind('predicate string', BREAK_SPIN)) ? false : 'gone';
+    if (!id) return (await isSpinning()) ? false : 'gone';
     const h = await wda.attr(id, 'hittable').catch(() => null);
     return h === null ? true : h === true || h === 'true' || h === 1 || h === '1';
   };
