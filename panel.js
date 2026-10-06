@@ -121,6 +121,12 @@ async function phoneStatus() {
   return { reachable: false };
 }
 
+// WebDriverAgent's own output + its stop history (why it stopped), for diagnosing from the panel.
+function wdaLog() {
+  const tail = (f, n) => { try { return fs.readFileSync(path.join(DIR, f), 'utf8').split(/\r?\n/).filter(Boolean).slice(-n); } catch { return []; } };
+  return [...tail('wda-out.txt', 10), ...tail('wda-history.log', 20).map((l) => '[history] ' + l)];
+}
+
 function logTail() {
   let lines = [];
   try { lines = fs.readFileSync(LOG_FILE, 'utf8').split(/\r?\n/).filter(Boolean); } catch {}
@@ -138,7 +144,7 @@ async function status() {
   const pid = child?.pid || lockedPid();
   return {
     bot: { running: !!pid, pid, byPanel: !!child, since: startedAt, lastExit },
-    wda: { managed: MANAGE_WDA, running: !!wdaChild },
+    wda: { managed: MANAGE_WDA, running: !!wdaChild, log: wdaLog() },
     phone: await phoneStatus(),
     ...logTail(),
   };

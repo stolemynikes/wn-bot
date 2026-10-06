@@ -87,6 +87,11 @@
     <div id="log"></div>
   </div>
 
+  <details class="card">
+    <summary><b>WebDriverAgent log</b> <span class="hint">(why the remote control stopped)</span></summary>
+    <div id="wdalog" style="margin-top:8px; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere;"></div>
+  </details>
+
   <p class="hint"><b>Start</b> also switches on the remote control on the iPhone ("Automation Running", takes up to a minute,
   keep the phone unlocked); <b>Stop</b> switches it off again. "Phone: not reachable" while the bot is off is normal.
   While the bot runs it uses the phone's screen.</p>
@@ -112,6 +117,7 @@ async function refresh() {
     if (ex && ex.code !== 0) $('exit').textContent =
       `Bot stopped (exit ${ex.code}) at ${new Date(ex.at).toLocaleTimeString()}\n${ex.output || '(no output)'}`;
     for (const k of ['entered', 'already', 'skipped', 'wins']) $('s-' + k).textContent = s.stats[k];
+    $('wdalog').textContent = (s.wda && s.wda.log && s.wda.log.length) ? s.wda.log.slice().reverse().join('\n') : '(nothing yet)';
     $('log').replaceChildren(...s.lines.slice().reverse().map((l) => {
       const d = document.createElement('div');
       d.textContent = l;
