@@ -203,6 +203,14 @@ module.exports = {
     { type: 'pause', duration: 50 },
     { type: 'pointerUp', button: 0 },
   ])),
+  // Tap with a chosen press time and a tiny finger drift while pressed (more like a real finger).
+  tapAt: (x, y, { holdMs = 50, driftX = 0, driftY = 0 } = {}) => s('POST', '/actions', finger([
+    { type: 'pointerMove', duration: 0, x: Math.round(x), y: Math.round(y) },
+    { type: 'pointerDown', button: 0 },
+    { type: 'pointerMove', duration: Math.round(holdMs / 2), x: Math.round(x + driftX), y: Math.round(y + driftY) },
+    { type: 'pause', duration: Math.round(holdMs / 2) },
+    { type: 'pointerUp', button: 0 },
+  ])),
   swipe: (x1, y1, x2, y2, ms = 250) => s('POST', '/actions', finger([
     { type: 'pointerMove', duration: 0, x: Math.round(x1), y: Math.round(y1) },
     { type: 'pointerDown', button: 0 },

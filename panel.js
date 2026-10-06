@@ -7,7 +7,7 @@ const http = require('http');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { fork } = require('child_process');
+const { fork, spawn, execSync } = require('child_process');
 
 const PORT = Number(process.env.PANEL_PORT || 3100);
 const DIR = __dirname;
@@ -32,9 +32,42 @@ function lockedPid() {
   return null;
 }
 
+// ---- WebDriverAgent (Mac only) -------------------------------------------------
+// On the Mac the panel starts WebDriverAgent (wda-keepalive.sh) together with the bot and stops it
+// again afterwards, so nothing runs on the iPhone while the bot is off: no "Automation Running"
+// banner and no "passcode for XCTest" prompts when you unlock your phone.
+// MANAGE_WDA=0 turns this off (e.g. if you start WDA yourself).
+const MANAGE_WDA = process.platform === 'darwin' && process.env.MANAGE_WDA !== '0'
+  && fs.existsSync(path.join(DIR, 'wda-keepalive.sh'));
+const WDA_OUT = path.join(DIR, 'wda-out.txt');
+let wdaChild = null;
+
+function startWda() {
+  if (!MANAGE_WDA || wdaChild) return;
+  // Leftovers from an earlier run (e.g. a closed Terminal window) would block the new start.
+  try { execSync('pkill -f "xcodebuild.*wda-derived"', { stdio: 'ignore' }); } catch {}
+  const out = fs.openSync(WDA_OUT, 'w');
+  wdaChild = spawn('/bin/bash', [path.join(DIR, 'wda-keepalive.sh')], {
+    cwd: DIR,
+    env: { ...process.env, WDA_DIR: process.env.WDA_DIR || path.join(os.homedir(), 'WebDriverAgent') },
+    stdio: ['ignore', out, out],
+  });
+  wdaChild.on('exit', () => { wdaChild = null; fs.closeSync(out); });
+}
+
+function stopWda() {
+  if (!wdaChild) return;
+  wdaChild.kill('SIGTERM'); // wda-keepalive.sh stops xcodebuild (and so WDA on the iPhone) on SIGTERM
+}
+
+// Also stop WDA when the panel itself stops.
+for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(sig, () => { stopWda(); setTimeout(() => process.exit(0), 1500); });
+process.on('exit', () => { if (wdaChild) wdaChild.kill('SIGTERM'); });
+
 function startBot() {
   if (child || lockedPid()) return 'already running';
   if (!WDA_URLS.length) return 'cannot start: phone-ip.txt / tailscale-ip.txt missing';
+  startWda();
   const out = fs.openSync(BOT_OUT, 'w');
   try {
     child = fork(path.join(DIR, 'giveaway-bot.js'), [], {
@@ -55,14 +88,16 @@ function startBot() {
     lastExit = { code: code ?? signal, at: Date.now(), output };
     child = null; startedAt = null;
     fs.closeSync(out);
+    stopWda(); // bot is done: switch WebDriverAgent off too
   });
-  return 'started';
+  return MANAGE_WDA ? 'started (WebDriverAgent is starting on the iPhone, can take up to a minute)' : 'started';
 }
 
 function stopBot() {
-  if (child) { child.send('stop'); return 'stopping (finishes the current step first)'; }
+  if (child) { child.send('stop'); return 'stopping (finishes the current step, then switches WebDriverAgent off)'; }
   const pid = lockedPid();
-  if (pid) { process.kill(pid); return 'stopped (it was started outside the panel)'; }
+  if (pid) { process.kill(pid); stopWda(); return 'stopped (it was started outside the panel)'; }
+  if (wdaChild) { stopWda(); return 'WebDriverAgent switched off'; }
   return 'not running';
 }
 
@@ -97,6 +132,7 @@ async function status() {
   const pid = child?.pid || lockedPid();
   return {
     bot: { running: !!pid, pid, byPanel: !!child, since: startedAt, lastExit },
+    wda: { managed: MANAGE_WDA, running: !!wdaChild },
     phone: await phoneStatus(),
     ...logTail(),
   };

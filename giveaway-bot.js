@@ -8,7 +8,11 @@
 //   DRY_RUN=1             just show how the current Bark messages are classified, then exit
 //   TILE_TIMEOUT=60       seconds to wait for the Giveaway tile before skipping
 //   POLL=3                seconds between Bark checks when idle
-//   BACKLOG=1             on first run, also handle the messages already in Bark (default: skip them)
+//   BACKLOG=1             at start, also handle messages already in Bark (default: skip them,
+//                         only giveaways that arrive after Start are entered)
+//   DELAY_OPEN=2-15       random wait (seconds) before tapping the Giveaway tile
+//   DELAY_ENTER=1-15      random wait (seconds) before pressing "Enter Giveaway"
+//   HUMAN=0               no random waits / tap jitter (fastest)
 
 const fs = require('fs');
 const path = require('path');
@@ -28,9 +32,30 @@ const CHECK_ICON = "type == 'XCUIElementTypeImage' AND name == 'check-circle'"; 
 const ENTER_BUTTON = "type == 'XCUIElementTypeButton' AND name == 'Enter Giveaway'";
 
 // Random pause between min and max seconds, so timings aren't identical every time.
-// HUMAN=0 turns the pauses off.
+// The average of two random numbers is used, so values near the middle are more common than
+// the extremes (closer to how a person reacts). HUMAN=0 turns the pauses off.
 const HUMAN = process.env.HUMAN !== '0';
-const pause = (min, max) => HUMAN ? wda.sleep((min + Math.random() * (max - min)) * 1000) : Promise.resolve();
+const humanRandom = () => (Math.random() + Math.random()) / 2;
+const pause = (min, max) => HUMAN ? wda.sleep((min + humanRandom() * (max - min)) * 1000) : Promise.resolve();
+const range = (env, def) => {
+  const [a, b] = String(process.env[env] || def).split('-').map(Number);
+  return Number.isFinite(a) && Number.isFinite(b) && b >= a ? [a, b] : def.split('-').map(Number);
+};
+const DELAY_OPEN = range('DELAY_OPEN', '2-15');   // before tapping the Giveaway tile
+const DELAY_ENTER = range('DELAY_ENTER', '1-15'); // before pressing "Enter Giveaway"
+
+// Tap somewhere inside a rectangle like a finger would: near the middle more often than at the
+// edges, never right on the edge, with a varying press time and a tiny drift while pressing.
+async function humanTapRect(r) {
+  if (!HUMAN) return wda.tap(r.x + r.width / 2, r.y + r.height / 2);
+  const gauss = () => Math.max(-1, Math.min(1, (Math.random() + Math.random() + Math.random() - 1.5) / 1.5));
+  const x = r.x + r.width / 2 + gauss() * r.width * 0.32;
+  const y = r.y + r.height / 2 + gauss() * r.height * 0.3;
+  const hold = 55 + Math.round(Math.random() * 110);
+  const drift = () => Math.round((Math.random() - 0.5) * 3);
+  return wda.tapAt(x, y, { holdMs: hold, driftX: drift(), driftY: drift() });
+}
+const humanTap = async (elementId) => humanTapRect(await wda.rect(elementId));
 
 function log(msg) {
   const line = `[${new Date().toLocaleTimeString()}] ${msg}`;
@@ -191,26 +216,46 @@ async function enterGiveaway(msg, attempt = 1) {
     if (await wda.tryFind('predicate string', CHECK_ICON)) return `already entered (checkmark) ${secs()}`;
     await wda.sleep(500);
   }
-  await pause(0.4, 1.5);
-  if (gift) {
-    await wda.click(gift);
-  } else {
-    // On busy streams the small icon often can't be found in time, but the tile's "Giveaway"
-    // text can: tapping the tile there opens the same Enter Giveaway panel.
-    const text = await wda.tryFind('predicate string', TILE);
-    if (!text) return `skipped: Giveaway tile disappeared ${secs()}`;
-    const r = await wda.rect(text);
-    await wda.tap(r.x + r.width / 2, r.y + r.height / 2);
-  }
 
-  const enter = await wda.waitFor('predicate string', ENTER_BUTTON, { timeout: 8000, interval: 400 });
+  // Wait like a person would, then tap somewhere on the tile (not always the same pixel).
+  await pause(...DELAY_OPEN);
+  const openTile = async () => {
+    const text = await wda.tryFind('predicate string', TILE);
+    if (!text) return false;
+    if (await wda.tryFind('predicate string', CHECK_ICON)) return 'entered';
+    // The tappable tile = the "Giveaway" text plus the icon below it.
+    const t = await wda.rect(text);
+    const iconId = gift && await wda.tryFind('predicate string', GIFT_ICON);
+    const i = iconId ? await wda.rect(iconId).catch(() => null) : null;
+    const box = i ? {
+      x: Math.min(t.x, i.x), y: Math.min(t.y, i.y),
+      width: Math.max(t.x + t.width, i.x + i.width) - Math.min(t.x, i.x),
+      height: Math.max(t.y + t.height, i.y + i.height) - Math.min(t.y, i.y),
+    } : t;
+    await humanTapRect(box);
+    return true;
+  };
+  const opened = await openTile();
+  if (opened === 'entered') return `already entered (checkmark) ${secs()}`;
+  if (!opened) return `skipped: Giveaway tile disappeared ${secs()}`;
+
+  let enter = await wda.waitFor('predicate string', ENTER_BUTTON, { timeout: 8000, interval: 400 });
   if (!enter) {
     if (await wda.tryFind('predicate string', CHECK_ICON)) return `already entered (checkmark) ${secs()}`;
     const file = await saveDebug(msg);
     return `skipped: "Enter Giveaway" button did not appear ${secs()} (saved ${file})`;
   }
-  await pause(0.3, 1.2);
-  await wda.click(enter);
+  await pause(...DELAY_ENTER);
+  // The panel may have closed while waiting: look again, reopen the tile once if needed.
+  enter = await wda.tryFind('predicate string', ENTER_BUTTON);
+  if (!enter) {
+    const again = await openTile();
+    if (again === 'entered') return `already entered (checkmark) ${secs()}`;
+    enter = again && await wda.waitFor('predicate string', ENTER_BUTTON, { timeout: 6000, interval: 400 });
+    if (!enter) return `skipped: "Enter Giveaway" panel closed while waiting ${secs()}`;
+    await pause(0.5, 2);
+  }
+  await humanTap(enter);
 
   // Confirm: the gift icon turns into a checkmark once entered.
   const check = await wda.waitFor('predicate string', CHECK_ICON, { timeout: 6000, interval: 400 });
@@ -262,7 +307,9 @@ async function connect() {
       return true;
     } catch (e) {
       if (i % 6 === 0) {
-        log(`Can't reach the phone yet: ${e.message.slice(0, 120)} (retrying every 10s)`);
+        log(i === 0 && /not reachable/.test(e.message)
+          ? 'Waiting for WebDriverAgent to start on the iPhone (can take up to a minute)...'
+          : `Can't reach the phone yet: ${e.message.slice(0, 120)} (retrying every 10s)`);
         if (/Code=41|Not authorized for performing UI testing/.test(e.message))
           log('   -> WebDriverAgent is running but iOS no longer lets it control the screen. Restart WDA on the Mac '
             + '(wda-keepalive.sh or Xcode Cmd+U); check iPhone Settings > Developer > Enable UI Automation.');
@@ -286,11 +333,15 @@ async function connect() {
     return;
   }
 
-  if (firstRun && !process.env.BACKLOG) {
+  // Every start: everything already in Bark counts as done, so only giveaways that arrive after
+  // Start are entered (not the ones that came in while the bot was off).
+  if (!process.env.BACKLOG) {
     await wda.unlockWithPasscode();
     const existing = await readBark();
+    const fresh = existing.filter((m) => !seen.has(m.key)).length;
     existing.forEach((m) => markSeen(m.key));
-    log(`First run: ${existing.length} existing Bark messages marked as done (set BACKLOG=1 to handle them).`);
+    log(`Ready: ${existing.length} messages already in Bark are skipped${fresh ? ` (${fresh} arrived while the bot was off)` : ''}. `
+      + `Waiting for new giveaways... (delays: open ${DELAY_OPEN.join('-')}s, enter ${DELAY_ENTER.join('-')}s)`);
   }
 
   while (!stopping) {

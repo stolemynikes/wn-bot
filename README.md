@@ -22,21 +22,21 @@ Think of it as three pieces that all have to be switched on:
 | Piece | Where | What it does |
 |---|---|---|
 | 1. **The iPhone** | Your phone | Does the actual tapping. Bark and Whatnot must be logged in. |
-| 2. **WDA keep-alive** | Mac, in the background | The "remote control connection" from the Mac to the iPhone. |
-| 3. **Panel** | Mac, in the background | The control panel you open on your phone. |
+| 2. **Panel** | Mac, in the background | The control panel you open on your phone. |
+| 3. **WebDriverAgent** | iPhone, started by the Mac | The "remote control connection". **Only on while the bot runs**: Start switches it on, Stop switches it off. |
 
-**Switching pieces 2 and 3 on** (once, and again after a Mac restart). Open Terminal/iTerm,
-unlock your iPhone, and type:
+**Switching the panel on** (once, and again after a Mac restart). Open Terminal/iTerm and type:
 ```
 cd ~/Dev/wn-bot
 ./bg.sh start
 ```
-Wait until it says **"WebDriverAgent is running"**. After that you can **close or quit
-Terminal/iTerm**: everything keeps running in the background. The Mac must stay on.
+After that you can **close or quit Terminal/iTerm**: the panel keeps running in the background.
+The Mac must stay on.
 
 Other commands (in Terminal, from `~/Dev/wn-bot`):
-- `./bg.sh status`: is everything running?
-- `./bg.sh restart`: restart everything (solves most problems)
+- `./bg.sh status`: what's running?
+- `./bg.sh logs`: the last lines of panel, bot and WebDriverAgent
+- `./bg.sh restart`: restart the panel (solves most problems)
 - `./bg.sh stop`: switch everything off
 
 (First time only: `brew install tmux`.)
@@ -44,8 +44,17 @@ Other commands (in Terminal, from `~/Dev/wn-bot`):
 ### Every day: starting and stopping
 1. On your phone, open the panel: **http://100.105.229.26:3100**
    (tip: in Safari, Share → **Add to Home Screen** gives you an app icon).
-2. Press **Start**: the robot starts working.
-3. Press **Stop**: it stops after finishing what it's doing.
+2. Press **Start**. The Mac first starts the remote control on your iPhone ("Automation Running"
+   appears; this can take up to a minute), then the robot starts. Keep your iPhone **unlocked**
+   while it starts. If iOS asks for your **passcode "for XCTest"**, type it once.
+3. Press **Stop**: it finishes what it's doing, then switches the remote control off. "Automation
+   Running" disappears and your phone is completely normal again (no passcode prompts).
+
+When you press **Start**, everything already in Bark is skipped: only giveaways that come in
+**after** Start are entered.
+
+To look more human, it waits a random time before opening a giveaway (2–15 seconds) and before
+pressing Enter (1–15 seconds), and it taps a slightly different spot every time.
 
 What you see in the panel:
 - **Bot: running**: the robot is on.
@@ -70,14 +79,21 @@ Work through this list from top to bottom:
 - Check on the Mac: `cd ~/Dev/wn-bot && ./bg.sh status`. Panel not running? Run `./bg.sh start`.
 
 **The panel says "Phone: not reachable"**
-- On the Mac, with your iPhone **unlocked**: `cd ~/Dev/wn-bot && ./bg.sh restart`
-- Are you **away from home**? Then it doesn't work yet (see "Away from home" below).
+- While the bot is **off**, that's normal: the remote control only runs after Start.
+- Just pressed **Start**? Wait up to a minute, with your iPhone **unlocked**.
+- Still not reachable? In the panel **Stop**, wait 10 seconds, **Start** again.
+  Still nothing: on the Mac `cd ~/Dev/wn-bot && ./bg.sh logs` and look at the WebDriverAgent part.
+- Are you **away from home**? Then it doesn't work (see "Away from home" below).
+
+**"Automation Running" stays on my screen while the bot is off**
+- Press **Stop** in the panel (that switches it off). Still there? On the Mac: `./bg.sh stop`, then
+  `./bg.sh start`. Is Xcode running a test (stop button ■ active)? Stop it there.
 
 **The log says "Not authorized for performing UI testing action"**
 - The connection to the iPhone got "stuck". Fix:
-  1. Restart your **iPhone** and unlock it.
-  2. On the Mac: `cd ~/Dev/wn-bot && ./bg.sh restart`
-  3. In the panel: **Stop**, then **Start**.
+  1. In the panel: **Stop**.
+  2. Restart your **iPhone** and unlock it.
+  3. In the panel: **Start**.
 
 **It doesn't enter anything**
 - Is there a **new** 🎁 message in Bark? Old messages are skipped on purpose.
@@ -87,8 +103,8 @@ Work through this list from top to bottom:
 **Still stuck?** Restart everything, in this order:
 1. On the Mac: `cd ~/Dev/wn-bot && ./bg.sh stop`
 2. Restart the iPhone and unlock it (preferably plugged into the Mac).
-3. On the Mac: `./bg.sh start` and wait for "WebDriverAgent is running".
-4. In the panel on your phone: **Start**.
+3. On the Mac: `./bg.sh start`
+4. In the panel on your phone: **Start**, and wait up to a minute.
 
 ### Once a week: renewing the "permission slip"
 The robot runs on the iPhone with a kind of permission slip from Apple. With a free Apple
@@ -98,8 +114,11 @@ restarting doesn't help:
 2. Open **Xcode**, then **WebDriverAgent** (in the `WebDriverAgent` folder in your home folder).
 3. At the top, choose **WebDriverAgentRunner** and your iPhone, then press **Cmd+U**.
 4. Once it's running, press the **stop button ■** in Xcode, then in Terminal:
-   `cd ~/Dev/wn-bot && ./bg.sh stop && FORCE_BUILD=1 ./bg.sh start`
-   (`FORCE_BUILD=1` makes it build fresh with the new signature).
+   ```
+   rm -rf "$TMPDIR/wda-derived"
+   ```
+   That throws away the old build, so the next **Start** in the panel builds it fresh with the new
+   signature (the first Start then takes a bit longer).
 
 You **don't** need to reinstall anything for normal use. Starting reuses the existing build.
 
