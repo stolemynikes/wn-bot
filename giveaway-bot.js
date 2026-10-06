@@ -256,11 +256,16 @@ async function enterGiveaway(msg, attempt = 1) {
   // doesn't appear within 3s, fall back to a plain element click on the icon (the proven method),
   // then on the tile text.
   const openTile = async () => {
-    const text = await wda.tryFind('predicate string', TILE);
-    if (!text) return false;
-    if (await wda.tryFind('predicate string', CHECK_ICON)) return 'entered';
+    // Gift icon visible = not entered yet: tap it right away (fewest lookups = fastest).
     const icon = await wda.tryFind('predicate string', GIFT_ICON);
-    if (icon) await humanTap(icon); else await humanTap(text);
+    if (icon) {
+      await humanTap(icon);
+    } else {
+      const text = await wda.tryFind('predicate string', TILE);
+      if (!text) return false;
+      if (await wda.tryFind('predicate string', CHECK_ICON)) return 'entered';
+      await humanTap(text);
+    }
     if (await wda.waitFor('predicate string', ENTER_BUTTON, { timeout: 3000, interval: 300 })) return true;
     const icon2 = await wda.tryFind('predicate string', GIFT_ICON);
     if (icon2) {
@@ -280,48 +285,55 @@ async function enterGiveaway(msg, attempt = 1) {
     }
     return 'no-panel';
   };
-  // Something can sit on top of the tile for a while (e.g. a spinning white loading block).
-  // iOS reports whether an element can actually be tapped ("hittable"); wait until it can.
-  const COVER_TIMEOUT = 60000;
-  const isTappable = async () => {
-    const id = (await wda.tryFind('predicate string', GIFT_ICON)) || (await wda.tryFind('predicate string', TILE));
-    // A break-spot spin can hide the tile temporarily: that's "covered", not "gone".
-    if (!id) return (await isSpinning()) ? false : 'gone';
-    const h = await wda.attr(id, 'hittable').catch(() => null);
-    return h === null ? true : h === true || h === 'true' || h === 1 || h === '1';
-  };
-  const coverDeadline = Date.now() + COVER_TIMEOUT;
-  let saidCovered = false;
-  let opened = null;
-  let lastTry = Date.now();
-  while (Date.now() < coverDeadline) {
-    if (await wda.tryFind('predicate string', CHECK_ICON)) return `already entered (checkmark) ${secs()}`;
-    const t = await isTappable();
-    if (t === 'gone') return `skipped: Giveaway tile disappeared ${secs()}`;
-    if (t) break;
-    if (!saidCovered) { log('   tile is covered (loading/spinner?) - waiting until it is free...'); saidCovered = true; }
-    // Safety net in case iOS reports "not tappable" wrongly: try a tap anyway every ~8s.
-    if (Date.now() - lastTry > 8000) {
-      lastTry = Date.now();
-      const r = await openTile();
-      if (r === true || r === 'entered') { opened = r; break; }
-    }
-    await wda.sleep(1500);
-  }
+  // Fast path: just tap. Most of the time this opens the Enter panel straight away.
+  let opened = await openTile();
 
-  // Tap; if the panel doesn't open (tile covered again, slow stream), keep trying every few
-  // seconds until the same deadline instead of giving up right away.
-  let saidRetry = false;
-  while (opened === null || opened === 'no-panel') {
-    opened = await openTile();
-    if (opened !== 'no-panel' || Date.now() >= coverDeadline) break;
-    if (!saidRetry) { log('   the Enter panel did not open - trying again...'); saidRetry = true; }
-    await wda.sleep(3000 + Math.random() * 2000);
+  // Slow path, only if that didn't work: something may be covering or hiding the tile (a spinning
+  // block, a poll, a slow stream), or a lookup simply failed for a moment on a busy stream.
+  // Keep trying until COVER_TIMEOUT, and only call the tile "gone" after it has been missing for
+  // several seconds in a row (a single failed lookup is not enough).
+  if (opened !== true && opened !== 'entered') {
+    const COVER_TIMEOUT = 60000;
+    const GONE_AFTER = 8000;
+    const coverDeadline = Date.now() + COVER_TIMEOUT;
+    let missingSince = opened === false ? Date.now() : null;
+    let said = { covered: false, spin: false };
+    let lastTry = Date.now();
+    while (Date.now() < coverDeadline) {
+      if (await wda.tryFind('predicate string', CHECK_ICON)) return `already entered (checkmark) ${secs()}`;
+      if (await isSpinning()) {
+        if (!said.spin) { log('   a spinning block is hiding the tile - waiting for it to finish...'); said.spin = true; }
+        missingSince = null;
+        await wda.sleep(1500);
+        continue;
+      }
+      const present = (await wda.tryFind('predicate string', GIFT_ICON)) || (await wda.tryFind('predicate string', TILE));
+      if (!present) {
+        missingSince = missingSince || Date.now();
+        if (Date.now() - missingSince > GONE_AFTER) {
+          const file = await saveDebug(msg);
+          return `skipped: Giveaway tile disappeared (gone for ${GONE_AFTER / 1000}s) ${secs()} (saved ${file})`;
+        }
+        await wda.sleep(1000);
+        continue;
+      }
+      missingSince = null;
+      if (Date.now() - lastTry > 3500) {
+        if (!said.covered) { log('   the Enter panel did not open (tile covered?) - trying again...'); said.covered = true; }
+        lastTry = Date.now();
+        opened = await openTile();
+        if (opened === true || opened === 'entered') break;
+      }
+      await wda.sleep(1000);
+    }
   }
   if (opened === 'entered') return `already entered (checkmark) ${secs()}`;
-  if (!opened) return `skipped: Giveaway tile disappeared ${secs()}`;
+  if (opened !== true) {
+    const file = await saveDebug(msg);
+    return `skipped: could not open the Enter panel within ${secs()} (saved ${file})`;
+  }
 
-  let enter = opened === true ? await wda.tryFind('predicate string', ENTER_BUTTON) : null;
+  let enter = await wda.tryFind('predicate string', ENTER_BUTTON);
   if (!enter) {
     if (await wda.tryFind('predicate string', CHECK_ICON)) return `already entered (checkmark) ${secs()}`;
     const file = await saveDebug(msg);
