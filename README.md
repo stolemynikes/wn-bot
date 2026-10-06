@@ -55,7 +55,7 @@ When you press **Start**, everything already in Bark is skipped: only giveaways 
 **after** Start are entered.
 
 To look more human, it waits a random time before opening a giveaway (2–15 seconds) and before
-pressing Enter (1–15 seconds), and it taps a slightly different spot every time.
+pressing Enter (1–8 seconds), and it taps a slightly different spot every time.
 
 What you see in the panel:
 - **Bot: running**: the robot is on.
