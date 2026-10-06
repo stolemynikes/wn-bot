@@ -30,6 +30,8 @@ const TILE = "type == 'XCUIElementTypeStaticText' AND name == 'Giveaway'";      
 const GIFT_ICON = "type == 'XCUIElementTypeImage' AND name == 'giveaway'";      // gift icon = not entered yet
 const CHECK_ICON = "type == 'XCUIElementTypeImage' AND name == 'check-circle'"; // checkmark = entered
 const ENTER_BUTTON = "type == 'XCUIElementTypeButton' AND name == 'Enter Giveaway'";
+// "Assigning Break Spot for: <buyer>": a spinning list that hides the tile for a while (not closable).
+const BREAK_SPIN = "type == 'XCUIElementTypeStaticText' AND (name BEGINSWITH[c] 'Assigning Break Spot' OR name CONTAINS[c] 'Assigning Break Spot')";
 
 // Random pause between min and max seconds, so timings aren't identical every time.
 // The average of two random numbers is used, so values near the middle are more common than
@@ -191,11 +193,21 @@ async function enterGiveaway(msg, attempt = 1) {
   // Wait for the tile; things can be in the way for a while (e.g. a "NEXT BREAK" poll covering
   // it). On a retry the giveaway may already be over (the tile disappears then), so don't wait as long.
   const timeout = attempt > 1 ? Math.min(TILE_TIMEOUT, 30000) : TILE_TIMEOUT;
+  let deadline = t0 + timeout;
   let tile = null;
   let lastDismiss = 0;
-  while (Date.now() - t0 < timeout) {
+  let saidSpin = false;
+  while (Date.now() < deadline) {
     tile = await wda.tryFind('predicate string', TILE);
     if (tile) break;
+    // "Assigning Break Spot for: <buyer>" (a spinning list of spots) hides the tile and has no
+    // close button: wait it out, extending the deadline while it's on screen (max 2 min in total).
+    if (await wda.tryFind('predicate string', BREAK_SPIN)) {
+      if (!saidSpin) { log('   break spot is being assigned - waiting for it to finish...'); saidSpin = true; }
+      deadline = Math.min(Math.max(deadline, Date.now() + 10000), t0 + 120000);
+      await wda.sleep(1500);
+      continue;
+    }
     // After 5s without a tile, check for a poll covering it and close only that (every 4s at most).
     if (Date.now() - t0 > 5000 && Date.now() - lastDismiss > 4000) {
       lastDismiss = Date.now();
@@ -206,7 +218,7 @@ async function enterGiveaway(msg, attempt = 1) {
   }
   if (!tile) {
     const file = await saveDebug(msg);
-    return `skipped: no Giveaway tile after ${timeout / 1000}s${attempt > 1 ? ' (giveaway probably ended)' : ''} (saved ${file})`;
+    return `skipped: no Giveaway tile after ${secs()}${attempt > 1 ? ' (giveaway probably ended)' : ''} (saved ${file})`;
   }
 
   // The tile's icon can load a moment after the tile itself: gift = enter, checkmark = done.
@@ -253,7 +265,8 @@ async function enterGiveaway(msg, attempt = 1) {
   const COVER_TIMEOUT = 60000;
   const isTappable = async () => {
     const id = (await wda.tryFind('predicate string', GIFT_ICON)) || (await wda.tryFind('predicate string', TILE));
-    if (!id) return 'gone';
+    // A break-spot spin can hide the tile temporarily: that's "covered", not "gone".
+    if (!id) return (await wda.tryFind('predicate string', BREAK_SPIN)) ? false : 'gone';
     const h = await wda.attr(id, 'hittable').catch(() => null);
     return h === null ? true : h === true || h === 'true' || h === 1 || h === '1';
   };
@@ -271,7 +284,7 @@ async function enterGiveaway(msg, attempt = 1) {
     if (Date.now() - lastTry > 8000) {
       lastTry = Date.now();
       const r = await openTile();
-      if (r === true || r === 'entered' || r === false) { opened = r; break; }
+      if (r === true || r === 'entered') { opened = r; break; }
     }
     await wda.sleep(1500);
   }
