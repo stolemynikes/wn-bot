@@ -190,7 +190,7 @@ async function enterGiveaway(msg, attempt = 1) {
 
   // Wait for the tile; things can be in the way for a while (e.g. a "NEXT BREAK" poll covering
   // it). On a retry the giveaway may already be over (the tile disappears then), so don't wait as long.
-  const timeout = attempt > 1 ? Math.min(TILE_TIMEOUT, 15000) : TILE_TIMEOUT;
+  const timeout = attempt > 1 ? Math.min(TILE_TIMEOUT, 30000) : TILE_TIMEOUT;
   let tile = null;
   let lastDismiss = 0;
   while (Date.now() - t0 < timeout) {
@@ -248,7 +248,43 @@ async function enterGiveaway(msg, attempt = 1) {
     }
     return 'no-panel';
   };
-  const opened = await openTile();
+  // Something can sit on top of the tile for a while (e.g. a spinning white loading block).
+  // iOS reports whether an element can actually be tapped ("hittable"); wait until it can.
+  const COVER_TIMEOUT = 60000;
+  const isTappable = async () => {
+    const id = (await wda.tryFind('predicate string', GIFT_ICON)) || (await wda.tryFind('predicate string', TILE));
+    if (!id) return 'gone';
+    const h = await wda.attr(id, 'hittable').catch(() => null);
+    return h === null ? true : h === true || h === 'true' || h === 1 || h === '1';
+  };
+  const coverDeadline = Date.now() + COVER_TIMEOUT;
+  let saidCovered = false;
+  let opened = null;
+  let lastTry = Date.now();
+  while (Date.now() < coverDeadline) {
+    if (await wda.tryFind('predicate string', CHECK_ICON)) return `already entered (checkmark) ${secs()}`;
+    const t = await isTappable();
+    if (t === 'gone') return `skipped: Giveaway tile disappeared ${secs()}`;
+    if (t) break;
+    if (!saidCovered) { log('   tile is covered (loading/spinner?) - waiting until it is free...'); saidCovered = true; }
+    // Safety net in case iOS reports "not tappable" wrongly: try a tap anyway every ~8s.
+    if (Date.now() - lastTry > 8000) {
+      lastTry = Date.now();
+      const r = await openTile();
+      if (r === true || r === 'entered' || r === false) { opened = r; break; }
+    }
+    await wda.sleep(1500);
+  }
+
+  // Tap; if the panel doesn't open (tile covered again, slow stream), keep trying every few
+  // seconds until the same deadline instead of giving up right away.
+  let saidRetry = false;
+  while (opened === null || opened === 'no-panel') {
+    opened = await openTile();
+    if (opened !== 'no-panel' || Date.now() >= coverDeadline) break;
+    if (!saidRetry) { log('   the Enter panel did not open - trying again...'); saidRetry = true; }
+    await wda.sleep(3000 + Math.random() * 2000);
+  }
   if (opened === 'entered') return `already entered (checkmark) ${secs()}`;
   if (!opened) return `skipped: Giveaway tile disappeared ${secs()}`;
 
