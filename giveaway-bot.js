@@ -45,15 +45,16 @@ const DELAY_OPEN = range('DELAY_OPEN', '2-15');   // before tapping the Giveaway
 const DELAY_ENTER = range('DELAY_ENTER', '1-15'); // before pressing "Enter Giveaway"
 
 // Tap somewhere inside a rectangle like a finger would: near the middle more often than at the
-// edges, never right on the edge, with a varying press time and a tiny drift while pressing.
+// edges, never right on the edge, with a varying press time. No movement while pressed: the
+// Enter Giveaway panel is a draggable sheet, and a moving press can be taken as a drag, which
+// cancels the button tap.
 async function humanTapRect(r) {
   if (!HUMAN) return wda.tap(r.x + r.width / 2, r.y + r.height / 2);
   const gauss = () => Math.max(-1, Math.min(1, (Math.random() + Math.random() + Math.random() - 1.5) / 1.5));
   const x = r.x + r.width / 2 + gauss() * r.width * 0.32;
   const y = r.y + r.height / 2 + gauss() * r.height * 0.3;
   const hold = 55 + Math.round(Math.random() * 110);
-  const drift = () => Math.round((Math.random() - 0.5) * 3);
-  return wda.tapAt(x, y, { holdMs: hold, driftX: drift(), driftY: drift() });
+  return wda.tapAt(x, y, { holdMs: hold });
 }
 const humanTap = async (elementId) => humanTapRect(await wda.rect(elementId));
 
@@ -219,27 +220,39 @@ async function enterGiveaway(msg, attempt = 1) {
 
   // Wait like a person would, then tap somewhere on the tile (not always the same pixel).
   await pause(...DELAY_OPEN);
+  // Open the Enter Giveaway panel: first a human-like tap somewhere on the gift icon; if the panel
+  // doesn't appear within 3s, fall back to a plain element click on the icon (the proven method),
+  // then on the tile text.
   const openTile = async () => {
     const text = await wda.tryFind('predicate string', TILE);
     if (!text) return false;
     if (await wda.tryFind('predicate string', CHECK_ICON)) return 'entered';
-    // The tappable tile = the "Giveaway" text plus the icon below it.
-    const t = await wda.rect(text);
-    const iconId = gift && await wda.tryFind('predicate string', GIFT_ICON);
-    const i = iconId ? await wda.rect(iconId).catch(() => null) : null;
-    const box = i ? {
-      x: Math.min(t.x, i.x), y: Math.min(t.y, i.y),
-      width: Math.max(t.x + t.width, i.x + i.width) - Math.min(t.x, i.x),
-      height: Math.max(t.y + t.height, i.y + i.height) - Math.min(t.y, i.y),
-    } : t;
-    await humanTapRect(box);
-    return true;
+    const icon = await wda.tryFind('predicate string', GIFT_ICON);
+    if (icon) await humanTap(icon); else await humanTap(text);
+    if (await wda.waitFor('predicate string', ENTER_BUTTON, { timeout: 3000, interval: 300 })) return true;
+    const icon2 = await wda.tryFind('predicate string', GIFT_ICON);
+    if (icon2) {
+      await wda.click(icon2);
+      if (await wda.waitFor('predicate string', ENTER_BUTTON, { timeout: 3000, interval: 300 })) {
+        log('   (human tap did not open the panel; plain tap on the icon did)');
+        return true;
+      }
+    }
+    const text2 = await wda.tryFind('predicate string', TILE);
+    if (text2) {
+      await wda.click(text2);
+      if (await wda.waitFor('predicate string', ENTER_BUTTON, { timeout: 3000, interval: 300 })) {
+        log('   (opened the panel via the tile text)');
+        return true;
+      }
+    }
+    return 'no-panel';
   };
   const opened = await openTile();
   if (opened === 'entered') return `already entered (checkmark) ${secs()}`;
   if (!opened) return `skipped: Giveaway tile disappeared ${secs()}`;
 
-  let enter = await wda.waitFor('predicate string', ENTER_BUTTON, { timeout: 8000, interval: 400 });
+  let enter = opened === true ? await wda.tryFind('predicate string', ENTER_BUTTON) : null;
   if (!enter) {
     if (await wda.tryFind('predicate string', CHECK_ICON)) return `already entered (checkmark) ${secs()}`;
     const file = await saveDebug(msg);
@@ -251,14 +264,23 @@ async function enterGiveaway(msg, attempt = 1) {
   if (!enter) {
     const again = await openTile();
     if (again === 'entered') return `already entered (checkmark) ${secs()}`;
-    enter = again && await wda.waitFor('predicate string', ENTER_BUTTON, { timeout: 6000, interval: 400 });
+    enter = again === true ? await wda.tryFind('predicate string', ENTER_BUTTON) : null;
     if (!enter) return `skipped: "Enter Giveaway" panel closed while waiting ${secs()}`;
     await pause(0.5, 2);
   }
   await humanTap(enter);
 
-  // Confirm: the gift icon turns into a checkmark once entered.
-  const check = await wda.waitFor('predicate string', CHECK_ICON, { timeout: 6000, interval: 400 });
+  // Confirm: the gift icon turns into a checkmark once entered. If the human-like tap didn't
+  // register (Enter button still there, no checkmark), press it the plain way once.
+  let check = await wda.waitFor('predicate string', CHECK_ICON, { timeout: 4000, interval: 400 });
+  if (!check) {
+    const stillThere = await wda.tryFind('predicate string', ENTER_BUTTON);
+    if (stillThere) {
+      await wda.click(stillThere);
+      check = await wda.waitFor('predicate string', CHECK_ICON, { timeout: 5000, interval: 400 });
+      if (check) log('   (human tap on Enter did not register; plain tap did)');
+    }
+  }
   if (check) return `ENTERED ${secs()}`;
   const file = await saveDebug(msg);
   // "unconfirmed" counts as failed, so it's retried: the retry sees the checkmark if it did work.
