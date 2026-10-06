@@ -75,7 +75,16 @@ async function humanTapRect(r) {
   const hold = 55 + Math.round(Math.random() * 110);
   return wda.tapAt(x, y, { holdMs: hold });
 }
-const humanTap = async (elementId) => humanTapRect(await wda.rect(elementId));
+// Returns false instead of throwing when the element is gone/stale (the stream redrew it between
+// finding and tapping, e.g. because of a spinner); callers then look it up again.
+const humanTap = async (elementId) => {
+  const r = await wda.rect(elementId).catch(() => null);
+  if (!r || !r.width) return false;
+  await humanTapRect(r).catch(() => {});
+  return true;
+};
+// Click that tolerates a stale element (returns false instead of throwing).
+const safeClick = (elementId) => wda.click(elementId).then(() => true, () => false);
 
 function log(msg) {
   const line = `[${new Date().toLocaleTimeString()}] ${msg}`;
@@ -268,16 +277,14 @@ async function enterGiveaway(msg, attempt = 1) {
     }
     if (await wda.waitFor('predicate string', ENTER_BUTTON, { timeout: 3000, interval: 300 })) return true;
     const icon2 = await wda.tryFind('predicate string', GIFT_ICON);
-    if (icon2) {
-      await wda.click(icon2);
+    if (icon2 && await safeClick(icon2)) {
       if (await wda.waitFor('predicate string', ENTER_BUTTON, { timeout: 3000, interval: 300 })) {
         log('   (human tap did not open the panel; plain tap on the icon did)');
         return true;
       }
     }
     const text2 = await wda.tryFind('predicate string', TILE);
-    if (text2) {
-      await wda.click(text2);
+    if (text2 && await safeClick(text2)) {
       if (await wda.waitFor('predicate string', ENTER_BUTTON, { timeout: 3000, interval: 300 })) {
         log('   (opened the panel via the tile text)');
         return true;
@@ -349,7 +356,11 @@ async function enterGiveaway(msg, attempt = 1) {
     if (!enter) return `skipped: "Enter Giveaway" panel closed while waiting ${secs()}`;
     await pause(0.5, 2);
   }
-  await humanTap(enter);
+  if (!(await humanTap(enter))) {
+    // The button was redrawn between finding and tapping: find it again and tap.
+    const fresh = await wda.tryFind('predicate string', ENTER_BUTTON);
+    if (fresh) await humanTap(fresh);
+  }
 
   // Confirm: the gift icon turns into a checkmark once entered. If the human-like tap didn't
   // register (Enter button still there, no checkmark), press it the plain way once.
@@ -357,7 +368,7 @@ async function enterGiveaway(msg, attempt = 1) {
   if (!check) {
     const stillThere = await wda.tryFind('predicate string', ENTER_BUTTON);
     if (stillThere) {
-      await wda.click(stillThere);
+      await safeClick(stillThere);
       check = await wda.waitFor('predicate string', CHECK_ICON, { timeout: 5000, interval: 400 });
       if (check) log('   (human tap on Enter did not register; plain tap did)');
     }
