@@ -265,9 +265,15 @@ async function enterGiveaway(msg, attempt = 1) {
   // doesn't appear within 3s, fall back to a plain element click on the icon (the proven method),
   // then on the tile text.
   const openTile = async () => {
+    // Never tap while something sits on top of the tile: the tap would land on that instead
+    // (e.g. a spinning white block). Check for a spinner, and whether iOS says the icon can
+    // actually be tapped ("hittable" = not covered).
+    if (await isSpinning()) return 'covered';
     // Gift icon visible = not entered yet: tap it right away (fewest lookups = fastest).
     const icon = await wda.tryFind('predicate string', GIFT_ICON);
     if (icon) {
+      const h = await wda.attr(icon, 'hittable').catch(() => null);
+      if (h === false || h === 'false' || h === 0 || h === '0') return 'covered';
       await humanTap(icon);
     } else {
       const text = await wda.tryFind('predicate string', TILE);
@@ -304,8 +310,9 @@ async function enterGiveaway(msg, attempt = 1) {
     const GONE_AFTER = 8000;
     const coverDeadline = Date.now() + COVER_TIMEOUT;
     let missingSince = opened === false ? Date.now() : null;
-    let said = { covered: false, spin: false };
+    let said = { covered: false, spin: false, retry: false };
     let lastTry = Date.now();
+    if (opened === 'covered') { log('   something is covering the tile - waiting until it is free...'); said.covered = true; }
     while (Date.now() < coverDeadline) {
       if (await wda.tryFind('predicate string', CHECK_ICON)) return `already entered (checkmark) ${secs()}`;
       if (await isSpinning()) {
@@ -325,13 +332,16 @@ async function enterGiveaway(msg, attempt = 1) {
         continue;
       }
       missingSince = null;
-      if (Date.now() - lastTry > 3500) {
-        if (!said.covered) { log('   the Enter panel did not open (tile covered?) - trying again...'); said.covered = true; }
+      // Covered: check again every second, so it taps as soon as the tile is free.
+      // A tap that didn't open the panel: retry a bit slower.
+      if (Date.now() - lastTry > (opened === 'covered' ? 800 : 3500)) {
+        if (opened === 'no-panel' && !said.retry) { log('   the Enter panel did not open - trying again...'); said.retry = true; }
         lastTry = Date.now();
         opened = await openTile();
         if (opened === true || opened === 'entered') break;
+        if (opened === 'covered' && !said.covered) { log('   something is covering the tile - waiting until it is free...'); said.covered = true; }
       }
-      await wda.sleep(1000);
+      await wda.sleep(700);
     }
   }
   if (opened === 'entered') return `already entered (checkmark) ${secs()}`;
