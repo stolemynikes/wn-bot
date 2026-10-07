@@ -262,9 +262,13 @@ async function enterGiveaway(msg, attempt = 1) {
   // Wait like a person would, then tap somewhere on the tile (not always the same pixel).
   await pause(...DELAY_OPEN);
   // Open the Enter Giveaway panel: first a human-like tap somewhere on the gift icon; if the panel
-  // doesn't appear within 3s, fall back to a plain element click on the icon (the proven method),
+  // doesn't appear within 5s, fall back to a plain element click on the icon (the proven method),
   // then on the tile text.
+  // IMPORTANT: never tap again while the Enter panel is already open. It covers the tile, and a
+  // tap on the panel outside its Enter button opens the giveaway's detail page.
+  const panelOpen = () => wda.tryFind('predicate string', ENTER_BUTTON);
   const openTile = async () => {
+    if (await panelOpen()) return true;
     // Never tap while something sits on top of the tile: the tap would land on that instead
     // (e.g. a spinning white block). Check for a spinner, and whether iOS says the icon can
     // actually be tapped ("hittable" = not covered).
@@ -281,17 +285,23 @@ async function enterGiveaway(msg, attempt = 1) {
       if (await wda.tryFind('predicate string', CHECK_ICON)) return 'entered';
       await humanTap(text);
     }
-    if (await wda.waitFor('predicate string', ENTER_BUTTON, { timeout: 3000, interval: 300 })) return true;
+    if (await wda.waitFor('predicate string', ENTER_BUTTON, { timeout: 5000, interval: 300 })) return true;
+    // Fallback taps: only if the panel really isn't there and nothing covers the icon.
+    if (await panelOpen()) return true;
+    if (await isSpinning()) return 'covered';
     const icon2 = await wda.tryFind('predicate string', GIFT_ICON);
-    if (icon2 && await safeClick(icon2)) {
-      if (await wda.waitFor('predicate string', ENTER_BUTTON, { timeout: 3000, interval: 300 })) {
+    const h2 = icon2 ? await wda.attr(icon2, 'hittable').catch(() => null) : null;
+    if (icon2 && !(h2 === false || h2 === 'false' || h2 === 0 || h2 === '0') && await safeClick(icon2)) {
+      if (await wda.waitFor('predicate string', ENTER_BUTTON, { timeout: 4000, interval: 300 })) {
         log('   (human tap did not open the panel; plain tap on the icon did)');
         return true;
       }
     }
+    if (await panelOpen()) return true;
     const text2 = await wda.tryFind('predicate string', TILE);
-    if (text2 && await safeClick(text2)) {
-      if (await wda.waitFor('predicate string', ENTER_BUTTON, { timeout: 3000, interval: 300 })) {
+    const ht = text2 ? await wda.attr(text2, 'hittable').catch(() => null) : null;
+    if (text2 && !(ht === false || ht === 'false' || ht === 0 || ht === '0') && await safeClick(text2)) {
+      if (await wda.waitFor('predicate string', ENTER_BUTTON, { timeout: 4000, interval: 300 })) {
         log('   (opened the panel via the tile text)');
         return true;
       }
@@ -366,11 +376,25 @@ async function enterGiveaway(msg, attempt = 1) {
     if (!enter) return `skipped: "Enter Giveaway" panel closed while waiting ${secs()}`;
     await pause(0.5, 2);
   }
-  if (!(await humanTap(enter))) {
-    // The button was redrawn between finding and tapping: find it again and tap.
-    const fresh = await wda.tryFind('predicate string', ENTER_BUTTON);
-    if (fresh) await humanTap(fresh);
+  // The panel slides in: tap only once the button has stopped moving (two equal positions 150ms
+  // apart), and only inside the button itself. A tap on the panel next to it opens the detail page.
+  const stableRect = async () => {
+    for (let i = 0; i < 8; i++) {
+      const id = await wda.tryFind('predicate string', ENTER_BUTTON);
+      if (!id) return null;
+      const a = await wda.rect(id).catch(() => null);
+      await wda.sleep(150);
+      const b = await wda.rect(id).catch(() => null);
+      if (a && b && a.width > 0 && a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height) return b;
+    }
+    return null;
+  };
+  const r = await stableRect();
+  if (!r) {
+    if (await wda.tryFind('predicate string', CHECK_ICON)) return `already entered (checkmark) ${secs()}`;
+    return `skipped: "Enter Giveaway" button kept moving / disappeared ${secs()}`;
   }
+  await humanTapRect(r);
 
   // Confirm: the gift icon turns into a checkmark once entered. If the human-like tap didn't
   // register (Enter button still there, no checkmark), press it the plain way once.
