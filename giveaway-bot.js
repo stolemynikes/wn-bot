@@ -31,7 +31,10 @@ const LOG_FILE = path.join(__dirname, 'giveaway-log.txt');
 const TILE = "type == 'XCUIElementTypeStaticText' AND name == 'Giveaway'";      // the "Giveaway / N Entries" tile
 const GIFT_ICON = "type == 'XCUIElementTypeImage' AND name == 'giveaway'";      // gift icon = not entered yet
 const CHECK_ICON = "type == 'XCUIElementTypeImage' AND name == 'check-circle'"; // checkmark = entered
-const ENTER_BUTTON = "type == 'XCUIElementTypeButton' AND name == 'Enter Giveaway'";
+// Whatnot renamed its buttons (seen 2026-10-07): the name is now a design-system id like
+// "wds.button.content=text-only.size=medium" and the visible text is only in the label.
+// Match on either, so both old and new app versions work.
+const ENTER_BUTTON = "type == 'XCUIElementTypeButton' AND (name == 'Enter Giveaway' OR label == 'Enter Giveaway')";
 // White "spinning" blocks in the middle of the stream (e.g. "Assigning Break Spot for: <buyer>",
 // randomisers, wheels) hide the tile for a while and can't be closed: recognised by these words.
 // SPIN_TEXT overrides them (comma-separated).
@@ -211,6 +214,47 @@ async function dismissOverlay() {
   return null;
 }
 
+// The Enter Giveaway panel is open when its Enter button or its "Terms & Conditions" link is there.
+const TERMS_BUTTON = "type == 'XCUIElementTypeButton' AND (name == 'Terms & Conditions' OR label == 'Terms & Conditions')";
+async function panelIsOpen() {
+  return !!((await wda.tryFind('predicate string', ENTER_BUTTON)) || (await wda.tryFind('predicate string', TERMS_BUTTON)));
+}
+async function waitForPanel(ms) {
+  const end = Date.now() + ms;
+  do {
+    if (await panelIsOpen()) return true;
+    await wda.sleep(300);
+  } while (Date.now() < end);
+  return false;
+}
+
+// The giveaway's detail page (opened by a tap on the panel next to its Enter button): it has
+// "Report Listing" / "Buyer Protections" and an ✕ at the top right. Close it to get back to the
+// stream. The ✕ is tapped by name if possible; only when the detail page is confirmed on screen,
+// it falls back to the ✕'s position (top right corner, nothing else is there on that page).
+// Names checked against the real detail page (2026-10-07): "Report Listing" and "Seller Info" are
+// buttons, "Buyer Protections" is text, the ✕ is a button labelled "close-big" (top right).
+const DETAIL_PAGE = "(name == 'Report Listing' OR label == 'Report Listing' OR name == 'Buyer Protections')";
+const DETAIL_CLOSE = "type == 'XCUIElementTypeButton' AND (label == 'close-big' OR name CONTAINS[c] 'close' OR label CONTAINS[c] 'close')";
+async function closeDetailPage() {
+  if (!(await wda.tryFind('predicate string', DETAIL_PAGE))) return false;
+  const h = (await wda.windowSize().catch(() => ({ height: 932, width: 430 })));
+  for (const id of await wda.findAll('predicate string', DETAIL_CLOSE)) {
+    const r = await wda.rect(id).catch(() => null);
+    if (r && r.width > 0 && r.y < h.height * 0.2) {
+      await safeClick(id);
+      log('   closed the giveaway detail page (opened by accident)');
+      await wda.sleep(1200);
+      return true;
+    }
+  }
+  // No named close button found: tap the ✕ position (top right, ~76pt from the top).
+  await wda.tap(h.width - 36, 76);
+  log('   closed the giveaway detail page via its ✕ position (opened by accident)');
+  await wda.sleep(1200);
+  return true;
+}
+
 // ---- Whatnot -------------------------------------------------------------
 // Whatnot stays open between giveaways. Its floating mini-player over Bark doesn't matter:
 // the session is tied to Bark (so Bark's screen is read) and links are opened directly.
@@ -262,9 +306,16 @@ async function enterGiveaway(msg, attempt = 1) {
   // Wait like a person would, then tap somewhere on the tile (not always the same pixel).
   await pause(...DELAY_OPEN);
   // Open the Enter Giveaway panel: first a human-like tap somewhere on the gift icon; if the panel
-  // doesn't appear within 3s, fall back to a plain element click on the icon (the proven method),
-  // then on the tile text.
+  // doesn't appear within 6s, fall back to a plain element click on the icon, then on the tile text.
+  //
+  // IMPORTANT: the open Enter panel has its OWN 🎁 icon (next to "N Entries") with the same name as
+  // the tile's icon. Tapping it, or anywhere on the panel outside the Enter button, opens the
+  // giveaway's detail page. So never tap the icon/tile while the panel is open (seen on 2026-10-07:
+  // on a slow stream the panel appeared just after the old 3s wait, and the fallback tapped the
+  // panel's icon).
   const openTile = async () => {
+    if (await panelIsOpen()) return true;
+    await closeDetailPage();
     // Gift icon visible = not entered yet: tap it right away (fewest lookups = fastest).
     const icon = await wda.tryFind('predicate string', GIFT_ICON);
     if (icon) {
@@ -275,17 +326,20 @@ async function enterGiveaway(msg, attempt = 1) {
       if (await wda.tryFind('predicate string', CHECK_ICON)) return 'entered';
       await humanTap(text);
     }
-    if (await wda.waitFor('predicate string', ENTER_BUTTON, { timeout: 3000, interval: 300 })) return true;
+    if (await waitForPanel(6000)) return true;
+    // Fallback taps, only if the panel really isn't there (checked right before each tap).
+    if (await panelIsOpen()) return true;
     const icon2 = await wda.tryFind('predicate string', GIFT_ICON);
-    if (icon2 && await safeClick(icon2)) {
-      if (await wda.waitFor('predicate string', ENTER_BUTTON, { timeout: 3000, interval: 300 })) {
+    if (icon2 && !(await panelIsOpen()) && await safeClick(icon2)) {
+      if (await waitForPanel(4000)) {
         log('   (human tap did not open the panel; plain tap on the icon did)');
         return true;
       }
     }
+    if (await panelIsOpen()) return true;
     const text2 = await wda.tryFind('predicate string', TILE);
-    if (text2 && await safeClick(text2)) {
-      if (await wda.waitFor('predicate string', ENTER_BUTTON, { timeout: 3000, interval: 300 })) {
+    if (text2 && !(await panelIsOpen()) && await safeClick(text2)) {
+      if (await waitForPanel(4000)) {
         log('   (opened the panel via the tile text)');
         return true;
       }
@@ -340,7 +394,8 @@ async function enterGiveaway(msg, attempt = 1) {
     return `skipped: could not open the Enter panel within ${secs()} (saved ${file})`;
   }
 
-  let enter = await wda.tryFind('predicate string', ENTER_BUTTON);
+  // The panel can be recognised (Terms & Conditions) a moment before its Enter button is: wait for it.
+  let enter = await wda.waitFor('predicate string', ENTER_BUTTON, { timeout: 4000, interval: 300 });
   if (!enter) {
     if (await wda.tryFind('predicate string', CHECK_ICON)) return `already entered (checkmark) ${secs()}`;
     const file = await saveDebug(msg);
