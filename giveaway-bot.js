@@ -199,7 +199,23 @@ async function findPoll() {
   return null;
 }
 
+// A poll's own close button (seen 2026-10-08, poll "30th bb" with options "buyers" /
+// "completely for free..."): name "xmark.circle", label "Close", at the top right of the poll.
+// This works whatever the poll says, so polls are closed by this button first; the poll options
+// themselves are never tapped.
+const POLL_CLOSE = "type == 'XCUIElementTypeButton' AND (name == 'xmark.circle' OR label == 'Close')";
+
 async function dismissOverlay() {
+  if (!screenHeight) screenHeight = (await wda.windowSize().catch(() => ({ height: 932 }))).height;
+  for (const id of await wda.findAll('predicate string', POLL_CLOSE)) {
+    const r = await wda.rect(id).catch(() => null);
+    if (!r || r.width === 0 || r.y > screenHeight * TOP) continue;
+    log('   a poll is covering the stream - closing it with its ✕');
+    await safeClick(id);
+    await wda.sleep(600);
+    return 'xmark.circle';
+  }
+  // Older/other polls: recognised by their text, then any close-style button.
   const poll = await findPoll();
   if (!poll) return null; // nothing to close: just keep waiting for the tile
   log(`   poll detected ("${poll}") - closing it`);
@@ -342,6 +358,10 @@ async function enterGiveaway(msg, attempt = 1) {
     await waitForBannerGone();
     if (await panelIsOpen()) return true;
     await closeDetailPage();
+    // A poll can sit on top of the tile while the tile is still found underneath: close it first,
+    // otherwise the tap would land on a poll option (= a vote).
+    const closedPoll = await dismissOverlay();
+    if (closedPoll) log(`   closed the poll ("${closedPoll}") before tapping the tile`);
     // Gift icon visible = not entered yet: tap it right away (fewest lookups = fastest).
     const icon = await wda.tryFind('predicate string', GIFT_ICON);
     if (icon) {
