@@ -219,6 +219,15 @@ const TERMS_BUTTON = "type == 'XCUIElementTypeButton' AND (name == 'Terms & Cond
 async function panelIsOpen() {
   return !!((await wda.tryFind('predicate string', ENTER_BUTTON)) || (await wda.tryFind('predicate string', TERMS_BUTTON)));
 }
+// iOS notification banner (seen as "ShortLook.Platter..." elements). While one is on screen the
+// bot can only see the banner, not Whatnot, and a tap could open the notification.
+const BANNER = "name BEGINSWITH 'ShortLook'";
+const bannerVisible = () => wda.tryFind('predicate string', BANNER);
+async function waitForBannerGone(maxMs = 15000) {
+  const end = Date.now() + maxMs;
+  while (Date.now() < end && await bannerVisible()) await wda.sleep(800);
+}
+
 async function waitForPanel(ms) {
   const end = Date.now() + ms;
   do {
@@ -270,7 +279,20 @@ async function enterGiveaway(msg, attempt = 1) {
   let tile = null;
   let lastDismiss = 0;
   let saidSpin = false;
+  let saidBanner = false;
+  let panelAlready = false;
   while (Date.now() < deadline) {
+    // A notification banner (Bark, Whatnot, ...) blinds the bot: while it's up, only the banner
+    // can be seen. Wait for it to go away; that time doesn't count against the deadline.
+    if (await bannerVisible()) {
+      if (!saidBanner) { log('   a notification banner is on screen - waiting for it to go away...'); saidBanner = true; }
+      await wda.sleep(1000);
+      deadline = Math.min(deadline + 1200, t0 + 150000);
+      continue;
+    }
+    // The Enter Giveaway panel can already be open (opened by Whatnot itself or by an earlier
+    // attempt). It covers the tile, so don't wait for the tile: go straight to pressing Enter.
+    if (await panelIsOpen()) { panelAlready = true; break; }
     tile = await wda.tryFind('predicate string', TILE);
     if (tile) break;
     // "Assigning Break Spot for: <buyer>" (a spinning list of spots) hides the tile and has no
@@ -289,14 +311,15 @@ async function enterGiveaway(msg, attempt = 1) {
     }
     await wda.sleep(700);
   }
-  if (!tile) {
+  if (!tile && !panelAlready) {
     const file = await saveDebug(msg);
     return `skipped: no Giveaway tile after ${secs()}${attempt > 1 ? ' (giveaway probably ended)' : ''} (saved ${file})`;
   }
+  if (panelAlready) log('   the Enter panel is already open - entering directly');
 
   // The tile's icon can load a moment after the tile itself: gift = enter, checkmark = done.
   let gift = null;
-  for (let i = 0; i < 3 && !gift; i++) {
+  for (let i = 0; i < 3 && !gift && !panelAlready; i++) {
     gift = await wda.tryFind('predicate string', GIFT_ICON);
     if (gift) break;
     if (await wda.tryFind('predicate string', CHECK_ICON)) return `already entered (checkmark) ${secs()}`;
@@ -304,7 +327,7 @@ async function enterGiveaway(msg, attempt = 1) {
   }
 
   // Wait like a person would, then tap somewhere on the tile (not always the same pixel).
-  await pause(...DELAY_OPEN);
+  if (!panelAlready) await pause(...DELAY_OPEN);
   // Open the Enter Giveaway panel: first a human-like tap somewhere on the gift icon; if the panel
   // doesn't appear within 6s, fall back to a plain element click on the icon, then on the tile text.
   //
@@ -314,6 +337,9 @@ async function enterGiveaway(msg, attempt = 1) {
   // on a slow stream the panel appeared just after the old 3s wait, and the fallback tapped the
   // panel's icon).
   const openTile = async () => {
+    if (await panelIsOpen()) return true;
+    // Never tap while a notification banner is on screen (the tap could land on the banner).
+    await waitForBannerGone();
     if (await panelIsOpen()) return true;
     await closeDetailPage();
     // Gift icon visible = not entered yet: tap it right away (fewest lookups = fastest).
@@ -347,7 +373,8 @@ async function enterGiveaway(msg, attempt = 1) {
     return 'no-panel';
   };
   // Fast path: just tap. Most of the time this opens the Enter panel straight away.
-  let opened = await openTile();
+  // (If the panel was already open, there's nothing to tap.)
+  let opened = panelAlready ? true : await openTile();
 
   // Slow path, only if that didn't work: something may be covering or hiding the tile (a spinning
   // block, a poll, a slow stream), or a lookup simply failed for a moment on a busy stream.
@@ -362,6 +389,8 @@ async function enterGiveaway(msg, attempt = 1) {
     let lastTry = Date.now();
     while (Date.now() < coverDeadline) {
       if (await wda.tryFind('predicate string', CHECK_ICON)) return `already entered (checkmark) ${secs()}`;
+      if (await bannerVisible()) { missingSince = null; await wda.sleep(1000); continue; }
+      if (await panelIsOpen()) { opened = true; break; }
       if (await isSpinning()) {
         if (!said.spin) { log('   a spinning block is hiding the tile - waiting for it to finish...'); said.spin = true; }
         missingSince = null;
@@ -402,6 +431,7 @@ async function enterGiveaway(msg, attempt = 1) {
     return `skipped: "Enter Giveaway" button did not appear ${secs()} (saved ${file})`;
   }
   await pause(...DELAY_ENTER);
+  await waitForBannerGone();
   // The panel may have closed while waiting: look again, reopen the tile once if needed.
   enter = await wda.tryFind('predicate string', ENTER_BUTTON);
   if (!enter) {
