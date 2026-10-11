@@ -488,6 +488,8 @@ async function enterGiveaway(msg, attempt = 1) {
 const MAX_ATTEMPTS = 2;
 const attempts = new Map(); // message key -> tries so far
 let errorStreak = 0;        // consecutive failed rounds
+let outageSince = null;     // when the phone stopped being reachable
+const OUTAGE_SKIP_MS = 60000; // after an outage longer than this, skip what came in meanwhile
 let stopping = false;
 function requestStop(how) {
   if (stopping) process.exit(0);
@@ -572,7 +574,21 @@ async function connect() {
       if (unlocked !== 'already unlocked') log(`Phone was locked -> ${unlocked}`);
       await wda.ensureApp();
       await wda.settings({ waitForIdleTimeout: 0, animationCoolOffTimeout: 0 });
-      if (errorStreak) { log(`Phone reachable again (via ${wda.WDA_URL}).`); errorStreak = 0; }
+      if (errorStreak) {
+        const outage = outageSince ? Date.now() - outageSince : 0;
+        log(`Phone reachable again (via ${wda.WDA_URL}) after ${Math.round(outage / 1000)}s.`);
+        errorStreak = 0;
+        outageSince = null;
+        // After a longer outage, the giveaways that came in meanwhile are mostly over: skip them,
+        // like a fresh Start, so new live giveaways don't have to wait behind them.
+        if (outage > OUTAGE_SKIP_MS && !process.env.BACKLOG) {
+          const existing = await readBark();
+          const missed = existing.filter((m) => !seen.has(m.key));
+          existing.forEach((m) => markSeen(m.key));
+          attempts.clear();
+          if (missed.length) log(`   skipped ${missed.length} message(s) that came in during the outage (probably over by now)`);
+        }
+      }
 
       const todo = (await readBark()).filter((m) => !seen.has(m.key));
       if (todo.length) log(`${todo.length} new message(s)`);
@@ -592,11 +608,27 @@ async function connect() {
         attempts.set(msg.key, attempt);
         log(`-> ${msg.title}${attempt > 1 ? ` (retry ${attempt - 1})` : ''}`);
         let result;
-        try { result = await enterGiveaway(msg, attempt); } catch (e) { result = 'error: ' + e.message.slice(0, 150); }
+        try {
+          result = await enterGiveaway(msg, attempt);
+        } catch (e) {
+          // Phone unreachable: not this giveaway's fault. Don't count the attempt; stop the batch
+          // and let the outer loop wait for the connection to come back.
+          if (/not reachable|fetch failed|ECONNREFUSED|ECONNRESET|EHOSTUNREACH|aborted|timeout/i.test(e.message)) {
+            attempts.set(msg.key, attempt - 1);
+            throw e;
+          }
+          result = 'error: ' + e.message.slice(0, 150);
+        }
         log(`   ${result}`);
         // Skips/errors are often timing (streams arriving close together): leave them unseen so the
         // next round tries again, up to MAX_ATTEMPTS.
         const failed = /^(skipped|error|unconfirmed)/.test(result);
+        if (failed) {
+          // Was it really the giveaway, or did the connection drop meanwhile? If the phone isn't
+          // reachable, don't count this attempt and wait for the connection instead.
+          const reachable = await wda.status().then(() => true, () => false);
+          if (!reachable) { attempts.set(msg.key, attempt - 1); throw new Error('WDA not reachable (connection dropped during this giveaway)'); }
+        }
         if (!failed || attempt >= MAX_ATTEMPTS) { markSeen(msg.key); attempts.delete(msg.key); }
         await pause(1, 4);
       }
@@ -604,6 +636,7 @@ async function connect() {
     } catch (e) {
       // Log the first error, then once a minute while it keeps failing (e.g. phone unreachable).
       if (errorStreak % 12 === 0) log('Error: ' + e.message.slice(0, 200) + ' (retrying every 5s)');
+      if (!outageSince) outageSince = Date.now();
       errorStreak++;
       await wda.sleep(5000);
     }
