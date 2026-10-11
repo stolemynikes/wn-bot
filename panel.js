@@ -60,6 +60,49 @@ function stopWda() {
   wdaChild.kill('SIGTERM'); // wda-keepalive.sh stops xcodebuild (and so WDA on the iPhone) on SIGTERM
 }
 
+// ---- Renew signature (Mac only) ---------------------------------------------------
+// With a free Apple ID the WebDriverAgent signature expires after 7 days. Renewing = stop
+// everything, throw away the old build, start again: wda-keepalive.sh then builds and signs
+// WebDriverAgent afresh (-allowProvisioningUpdates). Works best with the iPhone on a cable, unlocked.
+const DERIVED = path.join(process.env.TMPDIR || '/tmp', 'wda-derived'); // same path as wda-keepalive.sh
+const XCB_LOG = path.join(process.env.TMPDIR || '/tmp', 'wda-keepalive.log'); // xcodebuild output
+let renewing = false;
+
+async function renewSignature() {
+  if (!MANAGE_WDA) return 'only possible on the Mac (where WebDriverAgent is built)';
+  if (renewing) return 'already renewing';
+  renewing = true;
+  try {
+    if (child) { try { child.send('stop'); } catch {} setTimeout(() => { if (child) child.kill('SIGKILL'); }, 2000); }
+    stopWda();
+    for (let i = 0; i < 30 && (child || wdaChild); i++) await new Promise((r) => setTimeout(r, 500));
+    try { execSync('pkill -f "xcodebuild.*wda-derived"', { stdio: 'ignore' }); } catch {}
+    fs.rmSync(DERIVED, { recursive: true, force: true });
+    fs.appendFileSync(path.join(DIR, 'wda-history.log'), `===== ${new Date().toISOString()} RENEW: old build removed, rebuilding\n`);
+    const r = startBot();
+    return r.startsWith('started')
+      ? 'renewing: building and signing WebDriverAgent afresh (1-3 minutes, keep the iPhone unlocked, preferably on a cable). Watch the WebDriverAgent log.'
+      : 'old build removed, but starting failed: ' + r;
+  } finally {
+    renewing = false;
+  }
+}
+
+// Signs that the signature expired / the app isn't trusted, from xcodebuild's output.
+const SIGNING_PROBLEM = /expired|no longer valid|provisioning profile|not been explicitly trusted|untrusted developer|invalid code signature|code ?sign|0xe8008012|0xe800801c|0xe8008016|unable to launch|failed to install/i;
+function signingProblem() {
+  // Per file, only look at what came after the last successful start: an old error that was
+  // followed by a working start doesn't count.
+  for (const [f, okMark] of [[XCB_LOG, /ServerURLHere/], [path.join(DIR, 'wda-history.log'), /started OK|RENEW/]]) {
+    let lines = [];
+    try { lines = fs.readFileSync(f, 'utf8').split(/\r?\n/).slice(-300); } catch { continue; }
+    const lastOk = lines.map((l) => okMark.test(l)).lastIndexOf(true);
+    const hit = lines.slice(lastOk + 1).reverse().find((l) => SIGNING_PROBLEM.test(l));
+    if (hit) return hit.trim().slice(0, 200);
+  }
+  return null;
+}
+
 // Also stop WDA when the panel itself stops.
 for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(sig, () => { stopWda(); setTimeout(() => process.exit(0), 1500); });
 process.on('exit', () => { if (wdaChild) wdaChild.kill('SIGTERM'); });
@@ -144,7 +187,7 @@ async function status() {
   const pid = child?.pid || lockedPid();
   return {
     bot: { running: !!pid, pid, byPanel: !!child, since: startedAt, lastExit },
-    wda: { managed: MANAGE_WDA, running: !!wdaChild, log: wdaLog() },
+    wda: { managed: MANAGE_WDA, running: !!wdaChild, log: wdaLog(), signingProblem: MANAGE_WDA ? signingProblem() : null },
     phone: await phoneStatus(),
     ...logTail(),
   };
@@ -160,6 +203,7 @@ async function handler(req, res) {
     if (req.method === 'GET' && req.url === '/api/status') return send(200, await status());
     if (req.method === 'POST' && req.url === '/api/start') return send(200, { result: startBot() });
     if (req.method === 'POST' && req.url === '/api/stop') return send(200, { result: stopBot() });
+    if (req.method === 'POST' && req.url === '/api/renew') return send(200, { result: await renewSignature() });
     send(404, { error: 'not found' });
   } catch (e) {
     send(500, { error: e.message });

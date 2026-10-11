@@ -110,8 +110,16 @@ Work through this list from top to bottom:
 
 ### Once a week: renewing the "permission slip"
 The robot runs on the iPhone with a kind of permission slip from Apple. With a free Apple
-account, that slip is only valid for **7 days**. If it suddenly stops working after a week and
-restarting doesn't help:
+account, that slip is only valid for **7 days**. The panel shows an orange warning when it has
+probably expired.
+
+**The easy way (button):**
+1. Plug your iPhone into the Mac with a cable and unlock it.
+2. In the panel: **Renew signature** (at the bottom). Confirm.
+3. Wait 1–3 minutes. The **WebDriverAgent log** in the panel shows the progress; when the main log
+   says `Connected via …`, it works again for another 7 days.
+
+**If the button doesn't help** (e.g. "Untrusted Developer" or a Team/signing error), do it in Xcode:
 1. Plug your iPhone into the Mac.
 2. Open **Xcode**, then **WebDriverAgent** (in the `WebDriverAgent` folder in your home folder).
 3. At the top, choose **WebDriverAgentRunner** and your iPhone, then press **Cmd+U**.

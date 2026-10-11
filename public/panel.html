@@ -55,6 +55,9 @@
   #log .win { color: var(--win); font-weight: 700; }
   #log .problem { color: var(--warn); }
   .hint { font-size: 13px; color: var(--muted); }
+  .warnbox { border-color: var(--warn); background: var(--warn-bg); color: var(--text); }
+  .mono { font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: var(--warn); overflow-wrap: anywhere; }
+  button.secondary { width: 100%; background: transparent; color: var(--text); border: 1px solid var(--line); font-size: 15px; }
   #exit { margin: 0; color: var(--bad); white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 </style>
 </head>
@@ -75,6 +78,13 @@
   <div id="msg"></div>
   <pre id="exit" class="card" hidden></pre>
 
+  <div id="sigwarn" class="card warnbox" hidden>
+    <b>⚠️ WebDriverAgent won't start: the signature has probably expired.</b>
+    <div class="hint" style="margin:6px 0 10px">Plug the iPhone into the Mac, unlock it, then press <b>Renew signature</b>.
+      Doesn't help? Renew it in Xcode (README → "Once a week").</div>
+    <div id="sigdetail" class="mono"></div>
+  </div>
+
   <div class="card stats">
     <div class="stat"><b id="s-entered">–</b><span>entered</span></div>
     <div class="stat"><b id="s-already">–</b><span>already in</span></div>
@@ -91,6 +101,13 @@
     <summary><b>WebDriverAgent log</b> <span class="hint">(why the remote control stopped)</span></summary>
     <div id="wdalog" style="margin-top:8px; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere;"></div>
   </details>
+
+  <div class="card" id="renewcard" hidden>
+    <div class="row"><b>Renew signature</b><span class="hint">every 7 days (free Apple ID)</span></div>
+    <p class="hint" style="margin:6px 0 10px">Stops the bot, rebuilds and re-signs WebDriverAgent, then starts again (1–3 min).
+      Best with the iPhone on a cable to the Mac and unlocked.</p>
+    <button id="renew" class="secondary">Renew signature</button>
+  </div>
 
   <p class="hint"><b>Start</b> also switches on the remote control on the iPhone ("Automation Running", takes up to a minute,
   keep the phone unlocked); <b>Stop</b> switches it off again. "Phone: not reachable" while the bot is off is normal.
@@ -118,6 +135,10 @@ async function refresh() {
       `Bot stopped (exit ${ex.code}) at ${new Date(ex.at).toLocaleTimeString()}\n${ex.output || '(no output)'}`;
     for (const k of ['entered', 'already', 'skipped', 'wins']) $('s-' + k).textContent = s.stats[k];
     $('wdalog').textContent = (s.wda && s.wda.log && s.wda.log.length) ? s.wda.log.slice().reverse().join('\n') : '(nothing yet)';
+    $('renewcard').hidden = !(s.wda && s.wda.managed);
+    const sig = s.wda && s.wda.signingProblem;
+    $('sigwarn').hidden = !sig || s.phone.reachable;
+    $('sigdetail').textContent = sig || '';
     $('log').replaceChildren(...s.lines.slice().reverse().map((l) => {
       const d = document.createElement('div');
       d.textContent = l;
@@ -140,6 +161,10 @@ async function act(what) {
   busy = false;
   setTimeout(refresh, 800);
 }
+$('renew').onclick = () => {
+  if (!confirm('Renew the WebDriverAgent signature? This stops the bot and rebuilds (1-3 minutes). Plug the iPhone into the Mac and unlock it first.')) return;
+  act('renew');
+};
 $('start').onclick = () => act('start');
 $('stop').onclick = () => act('stop');
 refresh();
