@@ -371,7 +371,12 @@ const esc = (s) => s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>':
 function lineHtml(l) {
   const m = /^\[([^\]]+)\]\s?(.*)$/.exec(l);
   const t = m ? `<span class="t">${esc(m[1])}</span> ` : '', body = esc(m ? m[2] : l);
-  if (/WIN:/.test(l)) return { k: 'w', cls: 'wrow', html: t + `<span class="w">${body}</span>` };
+  if (/WIN:/.test(l)) {
+    // "🏆 WIN: 🏆 You won — seller! 🏆  https://…" becomes "🏆 you won · seller"
+    const who = (/You won — (.+?)!/.exec(l) || [])[1];
+    const text = who ? `🏆 you won · ${esc(who)}` : body.replace(/\s*https?:\/\/\S+/g, '');
+    return { k: 'w', cls: 'wrow', html: t + `<span class="w">${text}</span>` };
+  }
   if (/ENTERED/.test(l)) return { k: 'e', cls: '', html: t + `<span class="e">${body}</span>` };
   if (/skipped|unconfirmed|Error|Can't reach/.test(l)) return { k: 'p', cls: '', html: t + `<span class="p">${body}</span>` };
   const g = /^-> 🎁 Giveaway — (\S+) 🎁 (#\d+)(.*)$/.exec(m ? m[2] : '');
