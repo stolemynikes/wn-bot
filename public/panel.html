@@ -231,11 +231,10 @@ details .inner { padding-bottom: 14px; animation: rise .35s var(--ease) both; }
 @keyframes popin { 10% { transform: scale(1.05); } 30%, 100% { transform: scale(1); } }
 .more .glass { background: rgba(255, 255, 255, .04); box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; border-color: rgba(255, 255, 255, .08); }
 .more .card { padding: 12px; }
-/* wide screens: controls and stats on the left, the console fills the right half */
+/* wide screens: controls and stats on the left, the console on the right, as tall as the left column */
 @media (min-width: 980px) {
-  main { max-width: 1240px; padding-right: calc(50% + 6px); }
-  .term { position: fixed; z-index: 2; top: var(--ctop, calc(env(safe-area-inset-top, 0px) + 16px)); bottom: 16px;
-    right: max(16px, calc((100vw - 1240px) / 2)); width: calc((min(1240px, 100vw - 32px) - 12px) / 2);
+  main { max-width: 1240px; padding-right: calc(50% + 6px); position: relative; }
+  .term { position: absolute; z-index: 2; right: 0; width: calc(50% - 6px); top: var(--ctop, 0px); height: var(--ch, 70vh);
     display: flex; flex-direction: column; }
   #log { max-height: none; flex: 1; min-height: 0; font-size: 12.5px; align-content: start; }
 }
@@ -600,8 +599,18 @@ $('renew').onclick = (e) => {
 $('start').onclick = (e) => act('start', e.currentTarget);
 $('stop').onclick = (e) => act('stop', e.currentTarget);
 // wide screens: the console's top lines up with the first row of cards, not the title
-function alignConsole() { document.documentElement.style.setProperty('--ctop', document.querySelector('.status').offsetTop + 'px'); }
+// wide screens: the console starts level with the first row of cards and ends with the last card
+// (offsetTop/offsetHeight ignore the entry animation's transform)
+function alignConsole() {
+  const main = document.querySelector('main'), first = document.querySelector('.status');
+  // main is the offsetParent here, so offsetTop is already relative to it
+  const left = [...main.children].filter((el) => !el.classList.contains('term') && !el.matches('p.hint') && el.offsetParent);
+  const last = left[left.length - 1];
+  const top = first.offsetTop, bottom = last.offsetTop + last.offsetHeight;
+  main.style.setProperty('--ctop', top + 'px'); main.style.setProperty('--ch', Math.max(320, bottom - top) + 'px');
+}
 alignConsole(); addEventListener('resize', alignConsole); document.fonts && document.fonts.ready.then(alignConsole);
+if (window.ResizeObserver) new ResizeObserver(alignConsole).observe(document.querySelector('main'));
 refresh();
 setInterval(refresh, 5000);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
