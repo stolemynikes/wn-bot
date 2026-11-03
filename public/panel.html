@@ -231,6 +231,14 @@ details .inner { padding-bottom: 14px; animation: rise .35s var(--ease) both; }
 @keyframes popin { 10% { transform: scale(1.05); } 30%, 100% { transform: scale(1); } }
 .more .glass { background: rgba(255, 255, 255, .04); box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; border-color: rgba(255, 255, 255, .08); }
 .more .card { padding: 12px; }
+/* wide screens: controls and stats on the left, the console fills the right half */
+@media (min-width: 980px) {
+  main { max-width: 1240px; padding-right: calc(50% + 6px); }
+  .term { position: fixed; z-index: 2; top: calc(env(safe-area-inset-top, 0px) + 16px); bottom: 16px;
+    right: max(16px, calc((100vw - 1240px) / 2)); width: calc((min(1240px, 100vw - 32px) - 12px) / 2);
+    display: flex; flex-direction: column; }
+  #log { max-height: none; flex: 1; min-height: 0; font-size: 12.5px; align-content: start; }
+}
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
