@@ -600,7 +600,7 @@ $('renew').onclick = (e) => {
 $('start').onclick = (e) => act('start', e.currentTarget);
 $('stop').onclick = (e) => act('stop', e.currentTarget);
 // wide screens: the console's top lines up with the first row of cards, not the title
-function alignConsole() { document.documentElement.style.setProperty('--ctop', document.querySelector('.status').getBoundingClientRect().top + scrollY + 'px'); }
+function alignConsole() { document.documentElement.style.setProperty('--ctop', document.querySelector('.status').offsetTop + 'px'); }
 alignConsole(); addEventListener('resize', alignConsole); document.fonts && document.fonts.ready.then(alignConsole);
 refresh();
 setInterval(refresh, 5000);
