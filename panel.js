@@ -43,7 +43,16 @@ const WDA_OUT = path.join(DIR, 'wda-out.txt');
 let wdaChild = null;
 
 function startWda() {
-  if (!MANAGE_WDA || wdaChild) return;
+  if (!MANAGE_WDA) return;
+  if (wdaChild) {
+    // Still shutting down from a Stop a moment ago: start again once it is gone, or the new
+    // bot would wait forever for a WebDriverAgent that is switching off.
+    if (wdaChild.stopping && !wdaChild.restartQueued) {
+      wdaChild.restartQueued = true;
+      wdaChild.once('exit', () => { if (child) startWda(); });
+    }
+    return;
+  }
   // Leftovers from an earlier run (e.g. a closed Terminal window) would block the new start.
   try { execSync('pkill -f "xcodebuild.*wda-derived"', { stdio: 'ignore' }); } catch {}
   const out = fs.openSync(WDA_OUT, 'w');
@@ -57,6 +66,7 @@ function startWda() {
 
 function stopWda() {
   if (!wdaChild) return;
+  wdaChild.stopping = true;
   wdaChild.kill('SIGTERM'); // wda-keepalive.sh stops xcodebuild (and so WDA on the iPhone) on SIGTERM
 }
 
