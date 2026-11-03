@@ -190,7 +190,7 @@ function logTail() {
   }
   return {
     lines: lines.filter((l) => !l.startsWith('=== ')).slice(-60),
-    days: [...perDay.values()].slice(-14),
+    days: [...perDay.values()].slice(-31),
     stats: { entered: count(/ENTERED/), already: count(/already entered/), skipped: count(/\b(skipped|unconfirmed):/), wins: count(/WIN:/) },
   };
 }

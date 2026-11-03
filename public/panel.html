@@ -113,16 +113,21 @@ button.busy::after { content: ""; position: absolute; inset: 0; margin: auto; wi
 /* chart */
 .chart { padding: 12px 14px; display: grid; gap: 8px; }
 .chart .head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
-.bars { display: grid; grid-template-columns: repeat(7, 1fr); gap: 8px; height: 118px; align-items: end; }
+.bars { display: grid; grid-template-columns: repeat(30, 1fr); gap: 3px; height: 130px; align-items: end; position: relative; }
 .bar { display: grid; grid-template-rows: auto 1fr auto; justify-items: center; height: 100%; gap: 4px; min-width: 0; }
-.bar .v { font-size: 11px; font-weight: 600; }
-.bar .col { width: 100%; align-self: end; border-radius: 6px 6px 2px 2px; transform-origin: bottom;
+.bar .v { font-size: 10px; font-weight: 600; height: 14px; color: var(--fg); }
+.bar .v:empty { visibility: hidden; }
+.bar { cursor: pointer; }
+.bar.sel .col { opacity: 1; outline: 1px solid rgba(255, 255, 255, .5); outline-offset: 1px; }
+.bar .col { width: 100%; align-self: end; border-radius: 3px 3px 1px 1px; transform-origin: bottom;
   background: linear-gradient(180deg, var(--accent), rgba(43, 63, 217, .35)); opacity: .6; animation: grow .8s var(--ease) both; }
 .bar.today .col { opacity: 1; box-shadow: 0 0 14px var(--accent-glow); }
 .bar.zero .col { background: rgba(255, 255, 255, .12); }
-.bar .d { font-size: 10px; color: var(--dim); }
+.bar .d { font-size: 9px; color: var(--dim); height: 12px; white-space: nowrap; }
 .bar.today .d { color: var(--fg); }
 @keyframes grow { from { transform: scaleY(0); } }
+.daytip { font-size: 11px; color: var(--dim); min-height: 16px; }
+.daytip b { color: var(--fg); font-weight: 600; } .daytip .w { color: var(--gold); }
 .empty { color: var(--dim); font-size: 12px; padding: 18px 0; text-align: center; grid-column: 1 / -1; align-self: center; }
 
 /* terminal log */
@@ -141,6 +146,9 @@ button.busy::after { content: ""; position: absolute; inset: 0; margin: auto; wi
 #log .wrow.latest { animation: winpulse 2.4s ease-in-out infinite; }
 @keyframes winpulse { 50% { background-color: rgba(255, 211, 107, .09); } }
 #log .p { color: var(--warn); }
+#log .g { color: var(--accent); }
+#log .g b { color: #9fd8ff; font-weight: 700; text-shadow: 0 0 10px var(--accent-glow); }
+#log .g i { font-style: normal; color: var(--dim); }
 .cursor { display: inline-block; width: 7px; height: 13px; background: var(--fg); vertical-align: -2px; animation: blink 1.1s steps(1) infinite; }
 @keyframes blink { 50% { opacity: 0; } }
 
@@ -202,8 +210,9 @@ details .inner { padding-bottom: 14px; animation: rise .35s var(--ease) both; }
   </div>
 
   <div class="chart glass">
-    <div class="head"><span class="tag">wins / day</span><span class="dim num" id="weektotal"></span></div>
+    <div class="head"><span class="tag">wins / day · 30d</span><span class="dim num" id="weektotal"></span></div>
     <div class="bars num" id="bars" role="img" aria-label="Wins per day"></div>
+    <div class="daytip num" id="daytip" aria-live="polite"></div>
   </div>
 
   <div class="term glass">
@@ -232,7 +241,7 @@ details .inner { padding-bottom: 14px; animation: rise .35s var(--ease) both; }
 const $ = (id) => document.getElementById(id);
 const DAYS = ['su', 'mo', 'tu', 'we', 'th', 'fr', 'sa'];
 const calm = matchMedia('(prefers-reduced-motion: reduce)');
-let busy = false, lastLines = null;
+let busy = false, lastLines = null, rawLines = null, dayRows = [];
 
 function setCell(el, text, cls, live) {
   if (el.textContent !== text) el.textContent = text;
@@ -262,9 +271,14 @@ function lineHtml(l) {
   if (/WIN:/.test(l)) return { cls: 'wrow', html: t + `<span class="w">${body}</span>` };
   if (/ENTERED/.test(l)) return { cls: '', html: t + `<span class="e">${body}</span>` };
   if (/skipped|unconfirmed|Error|Can't reach/.test(l)) return { cls: '', html: t + `<span class="p">${body}</span>` };
+  const g = /^-> 🎁 Giveaway — (\S+) 🎁 (#\d+)(.*)$/.exec(m ? m[2] : '');
+  if (g) return { cls: '', html: t + `<span class="g">→ <b>${esc(g[1])}</b> ${esc(g[2])}<i>${esc(g[3])}</i></span>` };
   return { cls: '', html: t + body };
 }
+// lines that say nothing on their own
+const NOISE = /^\[[^\]]+\]\s+\d+ new message\(s\)\s*$/;
 function renderLog(lines) {
+  lines = lines.filter((l) => !NOISE.test(l));
   // only lines that were not there before slide in
   const known = new Set(lastLines || []), first = lastLines === null;
   lastLines = lines;
@@ -280,30 +294,46 @@ function renderLog(lines) {
   $('log').replaceChildren(cur, ...rows);
 }
 function dayKey(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
+const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+function showDay(i) {
+  const d = dayRows[i]; if (!d) return;
+  document.querySelectorAll('.bar.sel').forEach((b) => b.classList.remove('sel'));
+  const el = $('bars').children[i]; if (el) el.classList.add('sel');
+  $('daytip').innerHTML = d.wins === null
+    ? `<b>${d.label} ${d.date.getDate()} ${MONTHS[d.date.getMonth()]}</b> · no data`
+    : `<b>${d.label} ${d.date.getDate()} ${MONTHS[d.date.getMonth()]}</b> · <span class="w">${d.wins} win${d.wins === 1 ? '' : 's'}</span> · ${d.entered} entered`;
+}
 function renderDays(days) {
-  // the last 7 calendar days ending today, filled from what the log has
+  // the last 30 calendar days ending today, filled from what the log has
   const byDate = new Map((days || []).map((d) => [d.date, d]));
   const out = [];
-  for (let i = 6; i >= 0; i--) {
+  for (let i = 29; i >= 0; i--) {
     const d = new Date(); d.setDate(d.getDate() - i);
     const row = byDate.get(dayKey(d));
-    out.push({ key: dayKey(d), label: DAYS[d.getDay()], wins: row ? row.wins : null, entered: row ? row.entered : 0 });
+    out.push({ key: dayKey(d), date: d, label: DAYS[d.getDay()], wins: row ? row.wins : null, entered: row ? row.entered : 0 });
   }
   const known = out.filter((d) => d.wins !== null);
   const sumW = known.reduce((a, d) => a + d.wins, 0), sumE = known.reduce((a, d) => a + d.entered, 0);
-  $('weektotal').textContent = known.length ? `7d: ${sumW}${sumE ? ' · ' + (100 * sumW / sumE).toFixed(1) + '% hit' : ''}` : '';
-  const bars = $('bars'), sig = out.map((d) => d.key + ':' + d.wins).join();
+  $('weektotal').textContent = known.length ? `${sumW} wins${sumE ? ' · ' + (100 * sumW / sumE).toFixed(1) + '% hit' : ''}` : '';
+  const bars = $('bars'), sig = out.map((d) => d.key + ':' + d.wins + ':' + d.entered).join();
   if (bars.dataset.sig === sig) return;
-  bars.dataset.sig = sig;
-  if (!known.length) { bars.innerHTML = '<div class="empty">counting starts with the next start — wins per day appear here</div>'; return; }
+  bars.dataset.sig = sig; dayRows = out;
+  if (!known.length) { bars.innerHTML = '<div class="empty">counting starts with the next start — wins per day appear here</div>'; $('daytip').textContent = ''; return; }
   const max = Math.max(1, ...known.map((d) => d.wins));
-  bars.setAttribute('aria-label', 'Wins per day: ' + out.map((d) => `${d.label} ${d.wins === null ? 'no data' : d.wins}`).join(', '));
+  bars.setAttribute('aria-label', `Wins per day, last 30 days: ${sumW} in total, best day ${max}`);
   bars.innerHTML = out.map((d, i) => {
     const w = d.wins || 0, h = d.wins === null ? 2 : Math.max(2, Math.round(100 * w / max));
-    const cls = 'bar' + (i === 6 ? ' today' : '') + (w ? '' : ' zero');
-    return `<div class="${cls}"><span class="v">${d.wins === null ? '·' : w}</span><div class="col" style="height:${h}%;animation-delay:${i * 40}ms"></div><span class="d">${d.label}</span></div>`;
+    const today = i === out.length - 1;
+    const cls = 'bar' + (today ? ' today' : '') + (w ? '' : ' zero');
+    // value only on today and the best day; a date under every 7th bar counting back from today
+    const v = d.wins !== null && (today || (w === max && w > 0)) ? w : '';
+    const lbl = (out.length - 1 - i) % 7 === 0 ? d.date.getDate() : '';
+    return `<div class="${cls}" data-i="${i}"><span class="v">${v}</span><div class="col" style="height:${h}%;animation-delay:${i * 15}ms"></div><span class="d">${lbl}</span></div>`;
   }).join('');
+  showDay(out.length - 1);
 }
+$('bars').addEventListener('click', (e) => { const b = e.target.closest('.bar'); if (b) showDay(Number(b.dataset.i)); });
+$('bars').addEventListener('pointerover', (e) => { const b = e.target.closest('.bar'); if (b && e.pointerType === 'mouse') showDay(Number(b.dataset.i)); });
 
 async function refresh() {
   try {
@@ -333,7 +363,7 @@ async function refresh() {
     const sig = s.wda && s.wda.signingProblem;
     $('sigwarn').hidden = !sig || s.phone.reachable;
     $('sigdetail').textContent = sig || '';
-    if (!lastLines || s.lines.join('\n') !== lastLines.join('\n')) renderLog(s.lines);
+    if (s.lines.join('\n') !== rawLines) { rawLines = s.lines.join('\n'); renderLog(s.lines); }
   } catch {
     setCell($('bot'), 'panel offline', 'bad');
   }
