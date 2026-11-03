@@ -136,7 +136,7 @@ button.busy::after { content: ""; position: absolute; inset: 0; margin: auto; wi
 .term .bar3 { display: flex; align-items: center; gap: 5px; margin-bottom: 6px; }
 .term .bar3 i { width: 8px; height: 8px; border-radius: 50%; background: rgba(255, 255, 255, .16); }
 .term .bar3 span { margin-left: 8px; }
-#log { font-size: 12px; display: grid; gap: 3px; max-height: 46vh; overflow: auto; overscroll-behavior: contain; }
+#log { font-size: 12px; display: grid; gap: 3px; max-height: 42vh; overflow: auto; overscroll-behavior: contain; }
 #log div { overflow-wrap: anywhere; }
 #log .new { animation: slidein .45s var(--ease) both; }
 @keyframes slidein { from { opacity: 0; transform: translateY(-6px); } }
@@ -229,6 +229,8 @@ details .inner { padding-bottom: 14px; animation: rise .35s var(--ease) both; }
 .flash.go b { animation: popin 2.4s var(--ease); }
 @keyframes flash { 8% { opacity: 1; } 70% { opacity: 1; } 100% { opacity: 0; } }
 @keyframes popin { 10% { transform: scale(1.05); } 30%, 100% { transform: scale(1); } }
+.more .glass { background: rgba(255, 255, 255, .04); box-shadow: none; -webkit-backdrop-filter: none; backdrop-filter: none; border-color: rgba(255, 255, 255, .08); }
+.more .card { padding: 12px; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
@@ -270,6 +272,18 @@ details .inner { padding-bottom: 14px; animation: rise .35s var(--ease) both; }
     <div><b id="s-wins" class="w">–</b><span>wins</span></div>
   </div>
 
+  <div class="term glass">
+    <div class="chips" role="group" aria-label="Log filter" id="chips">
+      <button class="chip" data-f="all" aria-pressed="true">all</button>
+      <button class="chip" data-f="g" aria-pressed="false">giveaways<span class="c"></span></button>
+      <button class="chip" data-f="e" aria-pressed="false">entered<span class="c"></span></button>
+      <button class="chip" data-f="w" aria-pressed="false">wins<span class="c"></span></button>
+      <button class="chip" data-f="p" aria-pressed="false">problems<span class="c"></span></button>
+    </div>
+    <div class="bar3"><i></i><i></i><i></i><span class="tag">tail -f giveaway.log</span></div>
+    <div id="log" aria-live="polite"></div>
+  </div>
+
   <div class="pair">
     <div class="glass card lastwin">
       <span class="tag">last win</span>
@@ -289,6 +303,9 @@ details .inner { padding-bottom: 14px; animation: rise .35s var(--ease) both; }
     <div class="daytip num" id="daytip" aria-live="polite"></div>
   </div>
 
+  <details class="glass more">
+    <summary><span>more stats</span><span class="hint">health · top sellers · best hours</span></summary>
+    <div class="inner" style="display:grid;gap:12px">
   <div class="glass card">
     <div class="chart-head" style="display:flex;justify-content:space-between"><span class="tag">health</span><span class="dim" id="h-scope"></span></div>
     <div class="health num">
@@ -311,17 +328,8 @@ details .inner { padding-bottom: 14px; animation: rise .35s var(--ease) both; }
     </div>
   </div>
 
-  <div class="term glass">
-    <div class="chips" role="group" aria-label="Log filter" id="chips">
-      <button class="chip" data-f="all" aria-pressed="true">all</button>
-      <button class="chip" data-f="g" aria-pressed="false">giveaways<span class="c"></span></button>
-      <button class="chip" data-f="e" aria-pressed="false">entered<span class="c"></span></button>
-      <button class="chip" data-f="w" aria-pressed="false">wins<span class="c"></span></button>
-      <button class="chip" data-f="p" aria-pressed="false">problems<span class="c"></span></button>
     </div>
-    <div class="bar3"><i></i><i></i><i></i><span class="tag">tail -f giveaway.log</span></div>
-    <div id="log" aria-live="polite"></div>
-  </div>
+  </details>
 
   <details class="glass">
     <summary><span>wda.log</span><span class="hint">why the remote control stopped</span></summary>
@@ -518,7 +526,7 @@ function upFor(ms) { const t = Math.max(0, Math.floor((Date.now() - ms) / 1000))
   return h ? `${h}h${String(m).padStart(2, '0')}m` : `${m}m${String(s).padStart(2, '0')}s`; }
 setInterval(() => {
   const u = $('uptime'); if (u) u.textContent = upSince ? upFor(upSince) : '';
-  if (nowStart) { let sec = (Date.now() - nowStart) / 1000; if (sec < 0) sec = 0; $('nowtick').textContent = sec < 100 ? sec.toFixed(1) + 's' : Math.round(sec) + 's'; }
+  if (nowStart) { let sec = (Date.now() - nowStart) / 1000; if (sec < 0) sec = 0; $('nowtick').textContent = sec < 100 ? sec.toFixed(1) + 's' : Math.floor(sec / 60) + 'm' + String(Math.floor(sec % 60)).padStart(2, '0') + 's'; }
   const t = Number($('lw-ago').dataset.t); if (t) $('lw-ago').textContent = ago(t);
 }, 100);
 document.querySelectorAll('#chips .chip').forEach((c) => c.addEventListener('click', () => {
