@@ -89,8 +89,14 @@ const humanTap = async (elementId) => {
 // Click that tolerates a stale element (returns false instead of throwing).
 const safeClick = (elementId) => wda.click(elementId).then(() => true, () => false);
 
+// Lines only carry a time, so a date marker goes in whenever the day changes (and at the first
+// line after a start). The panel counts wins per day from these markers.
+let loggedDay = null;
 function log(msg) {
-  const line = `[${new Date().toLocaleTimeString()}] ${msg}`;
+  const now = new Date();
+  const day = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  if (day !== loggedDay) { loggedDay = day; fs.appendFileSync(LOG_FILE, `=== ${day} ===\n`); }
+  const line = `[${now.toLocaleTimeString()}] ${msg}`;
   console.log(line);
   fs.appendFileSync(LOG_FILE, line + '\n');
 }

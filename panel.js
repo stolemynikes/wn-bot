@@ -177,8 +177,20 @@ function logTail() {
   const lastStart = lines.map((l) => l.includes('Giveaway bot started')).lastIndexOf(true);
   const run = lastStart >= 0 ? lines.slice(lastStart) : [];
   const count = (re) => run.filter((l) => re.test(l)).length;
+  // Wins and entries per day, from the "=== YYYY-MM-DD ===" markers the bot writes. Lines from
+  // before the first marker have no known date and are left out.
+  const perDay = new Map();
+  let day = null;
+  for (const l of lines) {
+    const m = /^=== (\d{4}-\d\d-\d\d) ===$/.exec(l);
+    if (m) { day = m[1]; if (!perDay.has(day)) perDay.set(day, { date: day, wins: 0, entered: 0 }); continue; }
+    if (!day) continue;
+    if (/WIN:/.test(l)) perDay.get(day).wins++;
+    else if (/ENTERED/.test(l)) perDay.get(day).entered++;
+  }
   return {
-    lines: lines.slice(-60),
+    lines: lines.filter((l) => !l.startsWith('=== ')).slice(-60),
+    days: [...perDay.values()].slice(-14),
     stats: { entered: count(/ENTERED/), already: count(/already entered/), skipped: count(/\b(skipped|unconfirmed):/), wins: count(/WIN:/) },
   };
 }
@@ -194,12 +206,14 @@ async function status() {
 }
 
 // ---- http ----------------------------------------------------------------------
-const page = fs.readFileSync(path.join(DIR, 'public', 'panel.html'));
+// Read on every request, so a new panel design shows up on reload without restarting the panel
+// (a restart would also stop the bot and WebDriverAgent).
+const PAGE = path.join(DIR, 'public', 'panel.html');
 
 async function handler(req, res) {
   const send = (code, obj) => res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }).end(JSON.stringify(obj));
   try {
-    if (req.method === 'GET' && req.url === '/') return res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }).end(page);
+    if (req.method === 'GET' && req.url === '/') return res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }).end(fs.readFileSync(PAGE));
     if (req.method === 'GET' && req.url === '/api/status') return send(200, await status());
     if (req.method === 'POST' && req.url === '/api/start') return send(200, { result: startBot() });
     if (req.method === 'POST' && req.url === '/api/stop') return send(200, { result: stopBot() });
