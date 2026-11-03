@@ -280,18 +280,6 @@ details .inner { padding-bottom: 14px; animation: rise .35s var(--ease) both; }
     <div><b id="s-wins" class="w">–</b><span>wins</span></div>
   </div>
 
-  <div class="term glass">
-    <div class="chips" role="group" aria-label="Log filter" id="chips">
-      <button class="chip" data-f="all" aria-pressed="true">all</button>
-      <button class="chip" data-f="g" aria-pressed="false">giveaways<span class="c"></span></button>
-      <button class="chip" data-f="e" aria-pressed="false">entered<span class="c"></span></button>
-      <button class="chip" data-f="w" aria-pressed="false">wins<span class="c"></span></button>
-      <button class="chip" data-f="p" aria-pressed="false">problems<span class="c"></span></button>
-    </div>
-    <div class="bar3"><i></i><i></i><i></i><span class="tag">tail -f giveaway.log</span></div>
-    <div id="log" aria-live="polite"></div>
-  </div>
-
   <div class="pair">
     <div class="glass card lastwin">
       <span class="tag">last win</span>
@@ -338,6 +326,18 @@ details .inner { padding-bottom: 14px; animation: rise .35s var(--ease) both; }
 
     </div>
   </details>
+
+  <div class="term glass">
+    <div class="chips" role="group" aria-label="Log filter" id="chips">
+      <button class="chip" data-f="all" aria-pressed="true">all</button>
+      <button class="chip" data-f="g" aria-pressed="false">giveaways<span class="c"></span></button>
+      <button class="chip" data-f="e" aria-pressed="false">entered<span class="c"></span></button>
+      <button class="chip" data-f="w" aria-pressed="false">wins<span class="c"></span></button>
+      <button class="chip" data-f="p" aria-pressed="false">problems<span class="c"></span></button>
+    </div>
+    <div class="bar3"><i></i><i></i><i></i><span class="tag">tail -f giveaway.log</span></div>
+    <div id="log" aria-live="polite"></div>
+  </div>
 
   <details class="glass">
     <summary><span>wda.log</span><span class="hint">why the remote control stopped</span></summary>
