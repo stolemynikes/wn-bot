@@ -191,7 +191,60 @@ function logTail() {
   return {
     lines: lines.filter((l) => !l.startsWith('=== ')).slice(-60),
     days: [...perDay.values()].slice(-31),
+    extras: extras(lines, run),
     stats: { entered: count(/ENTERED/), already: count(/already entered/), skipped: count(/\b(skipped|unconfirmed):/), wins: count(/WIN:/) },
+  };
+}
+
+// Everything the panel's extra cards show, read from the same log in one pass.
+function extras(lines, run) {
+  const today = (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; })();
+  const sellers = new Map(), hours = Array(24).fill(0);
+  let day = null, seller = null, lastWin = null, current = null;
+  const todayLines = [];
+  for (const l of lines) {
+    const mk = /^=== (\d{4}-\d\d-\d\d) ===$/.exec(l);
+    if (mk) { day = mk[1]; continue; }
+    if (day === today) todayLines.push(l);
+    const time = (/^\[([^\]]+)\]/.exec(l) || [])[1];
+    const g = /-> 🎁 Giveaway — (\S+) 🎁/.exec(l);
+    if (g) {
+      seller = g[1];
+      const s = sellers.get(seller) || { seller, giveaways: 0, entered: 0, wins: 0 };
+      s.giveaways++; sellers.set(seller, s);
+      current = { seller, label: l.replace(/^.*🎁 Giveaway — \S+ 🎁\s*/, ''), time, day };
+      continue;
+    }
+    if (/ENTERED|already entered|\b(skipped|unconfirmed):|Stopped|Giveaway bot started/.test(l)) {
+      if (/ENTERED/.test(l) && seller && sellers.has(seller)) sellers.get(seller).entered++;
+      current = null;
+    }
+    const w = /WIN:.*You won — (.+?)!/.exec(l);
+    if (w) {
+      const s = sellers.get(w[1]) || { seller: w[1], giveaways: 0, entered: 0, wins: 0 };
+      s.wins++; sellers.set(w[1], s);
+      lastWin = { seller: w[1], time, day };
+      const h = Number((time || '').split(':')[0]);
+      if (h >= 0 && h < 24) hours[h]++;
+    }
+  }
+  // health: today when the log has dates, otherwise since the last start
+  const scope = todayLines.length ? todayLines : run;
+  const durations = scope.map((l) => /ENTERED (\d+(?:\.\d+)?)s/.exec(l)).filter(Boolean).map((m) => Number(m[1]));
+  const failed = scope.filter((l) => /\b(skipped|unconfirmed):/.test(l)).length;
+  const reconnects = scope.filter((l) => /Phone reachable again/.test(l)).length;
+  return {
+    lastWin,
+    now: current,
+    topSellers: [...sellers.values()].filter((s) => s.wins).sort((a, b) => b.wins - a.wins || a.giveaways - b.giveaways).slice(0, 5),
+    winHours: hours,
+    health: {
+      scope: todayLines.length ? 'today' : 'since start',
+      okRate: durations.length + failed ? durations.length / (durations.length + failed) : null,
+      avgEntry: durations.length ? durations.reduce((a, b) => a + b, 0) / durations.length : null,
+      recent: durations.slice(-24),
+      reconnects,
+    },
   };
 }
 
