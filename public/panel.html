@@ -136,7 +136,7 @@ button.busy::after { content: ""; position: absolute; inset: 0; margin: auto; wi
 .term .bar3 { display: flex; align-items: center; gap: 5px; margin-bottom: 6px; }
 .term .bar3 i { width: 8px; height: 8px; border-radius: 50%; background: rgba(255, 255, 255, .16); }
 .term .bar3 span { margin-left: 8px; }
-#log { font-size: 12px; display: grid; gap: 3px; max-height: 42vh; overflow: auto; overscroll-behavior: contain; }
+#log { font-size: 12px; display: grid; gap: 3px; max-height: 42vh; overflow-y: auto; overflow-x: hidden; padding: 0 6px; margin: 0 -6px; overscroll-behavior: contain; }
 #log div { overflow-wrap: anywhere; }
 #log .new { animation: slidein .45s var(--ease) both; }
 @keyframes slidein { from { opacity: 0; transform: translateY(-6px); } }
@@ -234,7 +234,7 @@ details .inner { padding-bottom: 14px; animation: rise .35s var(--ease) both; }
 /* wide screens: controls and stats on the left, the console fills the right half */
 @media (min-width: 980px) {
   main { max-width: 1240px; padding-right: calc(50% + 6px); }
-  .term { position: fixed; z-index: 2; top: calc(env(safe-area-inset-top, 0px) + 16px); bottom: 16px;
+  .term { position: fixed; z-index: 2; top: var(--ctop, calc(env(safe-area-inset-top, 0px) + 16px)); bottom: 16px;
     right: max(16px, calc((100vw - 1240px) / 2)); width: calc((min(1240px, 100vw - 32px) - 12px) / 2);
     display: flex; flex-direction: column; }
   #log { max-height: none; flex: 1; min-height: 0; font-size: 12.5px; align-content: start; }
@@ -599,6 +599,9 @@ $('renew').onclick = (e) => {
 };
 $('start').onclick = (e) => act('start', e.currentTarget);
 $('stop').onclick = (e) => act('stop', e.currentTarget);
+// wide screens: the console's top lines up with the first row of cards, not the title
+function alignConsole() { document.documentElement.style.setProperty('--ctop', document.querySelector('.status').getBoundingClientRect().top + scrollY + 'px'); }
+alignConsole(); addEventListener('resize', alignConsole); document.fonts && document.fonts.ready.then(alignConsole);
 refresh();
 setInterval(refresh, 5000);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
