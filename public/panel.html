@@ -89,6 +89,7 @@ button:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); 
 #start { border: 1px solid var(--edge); color: #eaf4ff; background: linear-gradient(135deg, var(--accent), var(--accent2));
   box-shadow: 0 6px 22px var(--accent-glow), inset 0 1px 0 rgba(255, 255, 255, .3); }
 #start.on { background: linear-gradient(135deg, rgba(79, 184, 255, .18), rgba(43, 63, 217, .18)); color: var(--accent); box-shadow: none; }
+#start .up { opacity: .75; font-weight: 500; margin-left: 4px; }
 #start .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 8px var(--ok);
   margin-right: 8px; animation: beat 2s ease-in-out infinite; vertical-align: 1px; }
 #stop { color: var(--bad); background: rgba(255, 123, 123, .08); border: 1px solid rgba(255, 123, 123, .3);
@@ -236,7 +237,7 @@ details .inner { padding-bottom: 14px; animation: rise .35s var(--ease) both; }
 <body>
 <span class="light l1"></span><span class="light l2"></span><span class="light l3"></span>
 <main>
-  <div class="top"><h1><span class="p">❯</span> giveaway-bot</h1><span class="host" id="since"></span></div>
+  <div class="top"><h1><span class="p">❯</span> giveaway-bot</h1></div>
 
   <div class="status">
     <div class="cell glass"><span class="tag">bot</span><b id="bot" class="warn">…</b></div>
@@ -344,7 +345,7 @@ details .inner { padding-bottom: 14px; animation: rise .35s var(--ease) both; }
 const $ = (id) => document.getElementById(id);
 const DAYS = ['su', 'mo', 'tu', 'we', 'th', 'fr', 'sa'];
 const calm = matchMedia('(prefers-reduced-motion: reduce)');
-let busy = false, lastLines = null, rawLines = null, dayRows = [], filter = 'all', lastWins = null, nowStart = null;
+let upSince = null, busy = false, lastLines = null, rawLines = null, dayRows = [], filter = 'all', lastWins = null, nowStart = null;
 
 function setCell(el, text, cls, live) {
   if (el.textContent !== text) el.textContent = text;
@@ -513,7 +514,10 @@ function renderExtras(s, running) {
   }
   lastWins = s.stats.wins;
 }
+function upFor(ms) { const t = Math.max(0, Math.floor((Date.now() - ms) / 1000)), h = Math.floor(t / 3600), m = Math.floor(t / 60) % 60, s = t % 60;
+  return h ? `${h}h${String(m).padStart(2, '0')}m` : `${m}m${String(s).padStart(2, '0')}s`; }
 setInterval(() => {
+  const u = $('uptime'); if (u) u.textContent = upSince ? upFor(upSince) : '';
   if (nowStart) { let sec = (Date.now() - nowStart) / 1000; if (sec < 0) sec = 0; $('nowtick').textContent = sec < 100 ? sec.toFixed(1) + 's' : Math.round(sec) + 's'; }
   const t = Number($('lw-ago').dataset.t); if (t) $('lw-ago').textContent = ago(t);
 }, 100);
@@ -532,12 +536,12 @@ async function refresh() {
     if (s.phone.locked === true) setCell($('lock'), 'locked', 'warn');
     else if (s.phone.locked === false) setCell($('lock'), 'open', 'ok');
     else setCell($('lock'), 'unknown', 'warn');
-    $('since').textContent = b.running && b.since ? 'up ' + ago(b.since) : '';
+    upSince = b.running && b.since ? b.since : null;
     if (!busy) {
-      const st = $('start'), html = b.running ? '<span class="dot"></span>running' : '▶ start';
+      const st = $('start'), html = b.running ? '<span class="dot"></span>running <span class="num up" id="uptime"></span>' : '▶ start';
       st.disabled = b.running; $('stop').disabled = !b.running;
       st.classList.toggle('on', b.running);
-      if (st.innerHTML !== html) st.innerHTML = html;
+      if (st.dataset.state !== String(b.running)) { st.dataset.state = b.running; st.innerHTML = html; }
     }
     const ex = b.lastExit;
     $('exit').hidden = b.running || !ex || ex.code === 0;
