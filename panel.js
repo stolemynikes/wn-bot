@@ -73,7 +73,10 @@ async function renewSignature() {
   if (renewing) return 'already renewing';
   renewing = true;
   try {
-    if (child) { try { child.send('stop'); } catch {} setTimeout(() => { if (child) child.kill('SIGKILL'); }, 2000); }
+    // Kill this bot only. Checking `child` when the timer fires would hit the new bot that
+    // startBot() below has started by then, and stop the renewal's own restart.
+    const old = child;
+    if (old) { try { old.send('stop'); } catch {} setTimeout(() => { if (child === old) old.kill('SIGKILL'); }, 2000); }
     stopWda();
     for (let i = 0; i < 30 && (child || wdaChild); i++) await new Promise((r) => setTimeout(r, 500));
     try { execSync('pkill -f "xcodebuild.*wda-derived"', { stdio: 'ignore' }); } catch {}
@@ -125,12 +128,15 @@ function startBot() {
   startedAt = Date.now();
   lastExit = null;
   child.on('error', (e) => { lastExit = { code: null, at: Date.now(), output: 'spawn error: ' + e.message }; });
+  const self = child;
   child.on('exit', (code, signal) => {
+    fs.closeSync(out);
+    // A bot that exits after a newer one has started (Renew) must not clear or stop the new one.
+    if (child !== self) return;
     let output = '';
     try { output = fs.readFileSync(BOT_OUT, 'utf8').trim().split(/\r?\n/).slice(-8).join('\n'); } catch {}
     lastExit = { code: code ?? signal, at: Date.now(), output };
     child = null; startedAt = null;
-    fs.closeSync(out);
     stopWda(); // bot is done: switch WebDriverAgent off too
   });
   return MANAGE_WDA ? 'started (WebDriverAgent is starting on the iPhone, can take up to a minute)' : 'started';
