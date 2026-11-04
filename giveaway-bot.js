@@ -105,11 +105,21 @@ function log(msg) {
 let seen = new Set();
 const firstRun = !fs.existsSync(SEEN_FILE);
 if (!firstRun) seen = new Set(JSON.parse(fs.readFileSync(SEEN_FILE, 'utf8')));
+// Keys Bark showed on the last read. The list is capped, and a key dropped while its message
+// is still in Bark's history comes back as "new": on 2026-11-03 that replayed 20 old wins.
+// So the cap only ever drops messages Bark no longer shows.
+let visible = new Set();
+const SEEN_MAX = 2000;
 function markSeen(key) {
   seen.add(key);
-  const list = [...seen].slice(-2000);
-  seen = new Set(list);
-  fs.writeFileSync(SEEN_FILE, JSON.stringify(list));
+  if (seen.size > SEEN_MAX) {
+    let over = seen.size - SEEN_MAX;
+    for (const k of seen) {
+      if (over <= 0) break;
+      if (!visible.has(k)) { seen.delete(k); over--; }
+    }
+  }
+  fs.writeFileSync(SEEN_FILE, JSON.stringify([...seen]));
 }
 
 // ---- Bark ----------------------------------------------------------------
@@ -153,6 +163,7 @@ async function readBark() {
   }
   // Bark lists newest first; also drop duplicates of the same message.
   const unique = [...new Map(messages.map((m) => [m.key, m])).values()];
+  visible = new Set(unique.map((m) => m.key));
   return unique.reverse();
 }
 
