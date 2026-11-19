@@ -18,6 +18,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const zlib = require('zlib');
 const wda = require('./wda');
 
 const BARK = 'me.fin.bark';
@@ -172,13 +173,28 @@ async function readBark() {
 }
 
 // Save a screenshot + the elements around the Giveaway tile, to see why a giveaway was skipped.
-async function saveDebug(msg) {
+// Several per failed attempt (tag says when: panel-gone, reopened, covered, gave-up), listed in
+// that attempt's row in attempts.jsonl. Also the full screen layout (.xml.gz). Only the newest
+// DEBUG_KEEP screenshots are kept.
+const DEBUG_KEEP = 300;
+function pruneDebug(dir) {
+  try {
+    const pngs = fs.readdirSync(dir).filter((f) => f.endsWith('.png')).sort();
+    for (const f of pngs.slice(0, Math.max(0, pngs.length - DEBUG_KEEP))) {
+      const b = f.slice(0, -4);
+      for (const ext of ['.png', '.txt', '.xml.gz']) fs.rmSync(path.join(dir, b + ext), { force: true });
+    }
+  } catch {}
+}
+async function saveDebug(msg, tag = 'gave-up') {
+  const t = Date.now();
   const dir = path.join(__dirname, 'debug');
   fs.mkdirSync(dir, { recursive: true });
-  const base = path.join(dir, new Date().toISOString().replace(/[:.]/g, '-'));
+  const base = path.join(dir, new Date().toISOString().replace(/[:.]/g, '-') + '-' + tag);
   try {
     fs.writeFileSync(base + '.png', await wda.screenshot());
     const src = await wda.source();
+    fs.writeFileSync(base + '.xml.gz', zlib.gzipSync(src));
     const tileLines = src.split('\n').filter((l) => /x="3[3-9]\d"|x="4[01]\d"/.test(l) && /y="(1[5-9]\d|2[0-5]\d)"/.test(l));
     // Buttons in the top part of the screen: shows what might be covering the tile (e.g. a poll's ⓧ).
     const topButtons = src.split('\n').filter((l) => /XCUIElementTypeButton/.test(l) && /y="([0-9]|[1-9]\d|[1-4]\d\d)"/.test(l));
@@ -190,7 +206,11 @@ async function saveDebug(msg) {
   } catch (e) {
     fs.writeFileSync(base + '.txt', `${msg.title}\n${msg.url}\nerror saving debug: ${e.message}\n`);
   }
-  return path.relative(__dirname, base) + '.png';
+  pruneDebug(dir);
+  const file = path.relative(__dirname, base) + '.png';
+  // How long the capture took (it holds the attempt up), so its cost is known.
+  if (currentSw) currentSw.shots.push({ at: Math.round((t - currentSw.t0) / 100) / 10, tag, file, took: (Date.now() - t) / 1000 });
+  return file;
 }
 
 // Close a pop-up/overlay that covers the stream (e.g. a "NEXT BREAK" poll with an ⓧ).
@@ -318,6 +338,7 @@ function stopwatch() {
     polls: 0,
     pollClosedAt: null,
     events: [],
+    shots: [],
     spinSince: null,
     spinEnd: null,
     tapAt: null,
@@ -418,7 +439,7 @@ async function enterSteps(msg, attempt, sw) {
   if (sw.pollClosedAt && (tile || panelAlready)) log(`   tile showed ${((Date.now() - sw.pollClosedAt) / 1000).toFixed(1)}s after the poll was closed`);
   sw.mark('tile');
   if (!tile && !panelAlready) {
-    const file = await saveDebug(msg);
+    const file = await saveDebug(msg, 'gave-up-no-tile');
     return `skipped: no Giveaway tile after ${secs()}${attempt > 1 ? ' (giveaway probably ended)' : ''} (saved ${file})`;
   }
   if (panelAlready) log('   the Enter panel is already open - entering directly');
@@ -509,7 +530,7 @@ async function enterSteps(msg, attempt, sw) {
       if (!present) {
         missingSince = missingSince || Date.now();
         if (Date.now() - missingSince > GONE_AFTER) {
-          const file = await saveDebug(msg);
+          const file = await saveDebug(msg, 'gave-up-tile-gone');
           return `skipped: Giveaway tile disappeared (gone for ${GONE_AFTER / 1000}s) ${secs()} (saved ${file})`;
         }
         await wda.sleep(1000);
@@ -517,7 +538,10 @@ async function enterSteps(msg, attempt, sw) {
       }
       missingSince = null;
       if (Date.now() - lastTry > 3500) {
-        if (!said.covered) { log('   the Enter panel did not open (tile covered?) - trying again...'); said.covered = true; }
+        if (!said.covered) {
+          log('   the Enter panel did not open (tile covered?) - trying again...'); said.covered = true;
+          await saveDebug(msg, 'covered');
+        }
         lastTry = Date.now();
         opened = await openTile();
         if (opened === true || opened === 'entered') break;
@@ -528,7 +552,7 @@ async function enterSteps(msg, attempt, sw) {
   sw.mark('panel');
   if (opened === 'entered') return `already entered (checkmark) ${secs()}`;
   if (opened !== true) {
-    const file = await saveDebug(msg);
+    const file = await saveDebug(msg, 'gave-up-no-panel');
     return `skipped: could not open the Enter panel within ${secs()} (saved ${file})`;
   }
 
@@ -538,7 +562,7 @@ async function enterSteps(msg, attempt, sw) {
   if (!enter) {
     if (await wda.tryFind('predicate string', CHECK_ICON)) return `already entered (checkmark) ${secs()}`;
     await spinCheck();
-    const file = await saveDebug(msg);
+    const file = await saveDebug(msg, 'gave-up-no-button');
     return `skipped: "Enter Giveaway" button did not appear ${secs()} (saved ${file})`;
   }
   await pause(...DELAY_ENTER);
@@ -549,9 +573,11 @@ async function enterSteps(msg, attempt, sw) {
   if (!enter) {
     log('   the Enter panel closed while waiting - opening it again...');
     await spinCheck();
+    await saveDebug(msg, 'panel-gone');
     const again = await openTile();
     if (again === 'entered') return `already entered (checkmark) ${secs()}`;
     enter = again === true ? await wda.tryFind('predicate string', ENTER_BUTTON) : null;
+    await saveDebug(msg, enter ? 'reopened' : 'gave-up-panel-gone');
     sw.mark('panel');
     if (!enter) return `skipped: "Enter Giveaway" panel closed while waiting ${secs()}`;
     await pause(0.5, 2);
@@ -579,7 +605,7 @@ async function enterSteps(msg, attempt, sw) {
   sw.mark('check');
   if (check) return `ENTERED ${secs()}`;
   await spinCheck();
-  const file = await saveDebug(msg);
+  const file = await saveDebug(msg, 'gave-up-no-check');
   // "unconfirmed" counts as failed, so it's retried: the retry sees the checkmark if it did work.
   return `unconfirmed: pressed Enter Giveaway, but no checkmark ${secs()} (saved ${file})`;
 }
@@ -641,6 +667,7 @@ function recordAttempt(msg, attempt, result) {
     bannerWait: sw ? sw.wait.banner / 1000 : null,
     spinEndToTap: sw && sw.spinEnd && sw.tapAt ? Math.round((sw.tapAt - sw.spinEnd) / 100) / 10 : null,
     events: sw ? sw.events : [],
+    shots: sw ? sw.shots : [],
   };
   writeRow(row);
   lastAttemptEnd = Date.now();
