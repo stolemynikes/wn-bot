@@ -99,7 +99,11 @@ function log(msg) {
   const line = `[${now.toLocaleTimeString()}] ${msg}`;
   console.log(line);
   fs.appendFileSync(LOG_FILE, line + '\n');
+  // Everything said during an attempt (poll closed, spinning block, retries...) also goes into
+  // that attempt's row in attempts.jsonl, with the second it happened.
+  if (currentSw && msg.startsWith('   ')) currentSw.events.push([Math.round((Date.now() - currentSw.t0) / 100) / 10, msg.trim()]);
 }
+let currentSw = null;
 
 // ---- remembered messages -------------------------------------------------
 let seen = new Set();
@@ -311,6 +315,8 @@ function stopwatch() {
   return {
     t0,
     wait: { spin: 0, banner: 0 },
+    events: [],
+    spinSince: null,
     spinEnd: null,
     tapAt: null,
     mark(name) {
@@ -333,7 +339,9 @@ let lastTiming = null; // the stopwatch of the last attempt, for attempts.jsonl
 async function enterGiveaway(msg, attempt = 1) {
   const sw = stopwatch();
   lastTiming = sw;
-  const result = await enterSteps(msg, attempt, sw);
+  currentSw = sw;
+  let result;
+  try { result = await enterSteps(msg, attempt, sw); } finally { currentSw = null; }
   const steps = fmtSteps(sw);
   return steps ? `${result} [${steps}]` : result;
 }
@@ -342,7 +350,18 @@ async function enterSteps(msg, attempt, sw) {
   const t0 = sw.t0;
   const secs = () => ((Date.now() - t0) / 1000).toFixed(1) + 's';
   // Time a sleep spent waiting out a spinning block / banner.
-  const waitOut = async (kind, ms) => { await wda.sleep(ms); sw.wait[kind] += ms; if (kind === 'spin') sw.spinEnd = Date.now(); };
+  const waitOut = async (kind, ms) => { await wda.sleep(ms); sw.wait[kind] += ms; };
+  // Spinning block check that logs when one appears and when it is gone again (with how long it
+  // stayed), wherever in the attempt that happens.
+  const spinCheck = async () => {
+    const on = await isSpinning();
+    if (on && !sw.spinSince) { sw.spinSince = Date.now(); log('   a spinning block is on screen - waiting for it to finish...'); }
+    if (!on && sw.spinSince) {
+      log(`   spinning block gone after ${((Date.now() - sw.spinSince) / 1000).toFixed(1)}s`);
+      sw.spinSince = null; sw.spinEnd = Date.now();
+    }
+    return on;
+  };
   await wda.openUrl(msg.url);
   sw.mark('open');
 
@@ -352,7 +371,6 @@ async function enterSteps(msg, attempt, sw) {
   let deadline = t0 + timeout;
   let tile = null;
   let lastDismiss = 0;
-  let saidSpin = false;
   let saidBanner = false;
   let panelAlready = false;
   while (Date.now() < deadline) {
@@ -371,8 +389,7 @@ async function enterSteps(msg, attempt, sw) {
     if (tile) break;
     // "Assigning Break Spot for: <buyer>" (a spinning list of spots) hides the tile and has no
     // close button: wait it out, extending the deadline while it's on screen (max 2 min in total).
-    if (await isSpinning()) {
-      if (!saidSpin) { log('   a spinning block is hiding the tile - waiting for it to finish...'); saidSpin = true; }
+    if (await spinCheck()) {
       deadline = Math.min(Math.max(deadline, Date.now() + 10000), t0 + 120000);
       await waitOut('spin', 1500);
       continue;
@@ -385,6 +402,7 @@ async function enterSteps(msg, attempt, sw) {
     }
     await wda.sleep(700);
   }
+  if (sw.spinSince) await spinCheck();
   sw.mark('tile');
   if (!tile && !panelAlready) {
     const file = await saveDebug(msg);
@@ -464,14 +482,13 @@ async function enterSteps(msg, attempt, sw) {
     const GONE_AFTER = 8000;
     const coverDeadline = Date.now() + COVER_TIMEOUT;
     let missingSince = opened === false ? Date.now() : null;
-    let said = { covered: false, spin: false };
+    let said = { covered: false };
     let lastTry = Date.now();
     while (Date.now() < coverDeadline) {
       if (await wda.tryFind('predicate string', CHECK_ICON)) return `already entered (checkmark) ${secs()}`;
       if (await bannerVisible()) { missingSince = null; await waitOut('banner', 1000); continue; }
       if (await panelIsOpen()) { opened = true; break; }
-      if (await isSpinning()) {
-        if (!said.spin) { log('   a spinning block is hiding the tile - waiting for it to finish...'); said.spin = true; }
+      if (await spinCheck()) {
         missingSince = null;
         await waitOut('spin', 1500);
         continue;
@@ -508,6 +525,7 @@ async function enterSteps(msg, attempt, sw) {
   sw.mark('button');
   if (!enter) {
     if (await wda.tryFind('predicate string', CHECK_ICON)) return `already entered (checkmark) ${secs()}`;
+    await spinCheck();
     const file = await saveDebug(msg);
     return `skipped: "Enter Giveaway" button did not appear ${secs()} (saved ${file})`;
   }
@@ -517,6 +535,8 @@ async function enterSteps(msg, attempt, sw) {
   // The panel may have closed while waiting: look again, reopen the tile once if needed.
   enter = await wda.tryFind('predicate string', ENTER_BUTTON);
   if (!enter) {
+    log('   the Enter panel closed while waiting - opening it again...');
+    await spinCheck();
     const again = await openTile();
     if (again === 'entered') return `already entered (checkmark) ${secs()}`;
     enter = again === true ? await wda.tryFind('predicate string', ENTER_BUTTON) : null;
@@ -546,6 +566,7 @@ async function enterSteps(msg, attempt, sw) {
   }
   sw.mark('check');
   if (check) return `ENTERED ${secs()}`;
+  await spinCheck();
   const file = await saveDebug(msg);
   // "unconfirmed" counts as failed, so it's retried: the retry sees the checkmark if it did work.
   return `unconfirmed: pressed Enter Giveaway, but no checkmark ${secs()} (saved ${file})`;
@@ -575,6 +596,7 @@ function recordAttempt(msg, attempt, result) {
     spinWait: sw ? sw.wait.spin / 1000 : null,
     bannerWait: sw ? sw.wait.banner / 1000 : null,
     spinEndToTap: sw && sw.spinEnd && sw.tapAt ? Math.round((sw.tapAt - sw.spinEnd) / 100) / 10 : null,
+    events: sw ? sw.events : [],
   };
   try { fs.appendFileSync(ATTEMPTS_FILE, JSON.stringify(row) + '\n'); } catch {}
 }
