@@ -127,7 +127,7 @@ button.busy::after { content: ""; position: absolute; inset: 0; margin: auto; wi
 .bar .v:empty { visibility: hidden; }
 .bar { cursor: pointer; }
 .bar.sel .col { opacity: 1; outline: 1px solid rgba(255, 255, 255, .5); outline-offset: 1px; }
-.bar .col { width: 100%; align-self: end; border-radius: 3px 3px 1px 1px; transform-origin: bottom;
+.bar .col { transition: height .45s var(--ease); width: 100%; align-self: end; border-radius: 3px 3px 1px 1px; transform-origin: bottom;
   background: linear-gradient(180deg, var(--accent), rgba(43, 63, 217, .35)); opacity: .6; animation: grow .8s var(--ease) both; }
 .bar.today .col { opacity: 1; box-shadow: 0 0 14px var(--accent-glow); }
 .bar.zero .col { background: rgba(255, 255, 255, .12); }
@@ -210,6 +210,10 @@ details .inner { padding-bottom: 14px; animation: rise .35s var(--ease) both; }
 @keyframes pulse { 50% { opacity: .55; } }
 .now .who { font-size: 15px; font-weight: 700; color: #9fd8ff; text-shadow: 0 0 10px var(--accent-glow); overflow-wrap: anywhere; }
 .now .who span { color: var(--dim); font-weight: 400; text-shadow: none; }
+/* between giveaways the card stays (so nothing below it jumps) and just goes quiet */
+.now.idle { border-color: var(--edge); }
+.now.idle .live, .now.idle .steps { visibility: hidden; }
+.now.idle .who { color: var(--dim); font-weight: 500; text-shadow: none; }
 .steps { display: flex; gap: 6px; font-size: 11px; flex-wrap: wrap; }
 .steps span { padding: 3px 8px; border-radius: 999px; border: 1px solid var(--edge); color: var(--dim); }
 .steps .done { color: var(--ok); border-color: rgba(95, 224, 160, .4); }
@@ -469,6 +473,22 @@ function renderDays(days) {
   if (!known.length) { bars.innerHTML = '<div class="empty">counting starts with the next start — wins per day appear here</div>'; $('daytip').textContent = ''; return; }
   const max = Math.max(1, ...known.map((d) => d.wins));
   bars.setAttribute('aria-label', `Wins per day, last 30 days: ${sumW} in total, best day ${max}`);
+  // Same 30 days as before (only a count changed, e.g. one more entry): update the bars in place.
+  // Rebuilding them replays the grow-in animation, which made the whole panel look refreshed.
+  const keys = out.map((d) => d.key).join();
+  const sel = Math.max(0, [...bars.children].findIndex((b) => b.classList.contains('sel')));
+  if (bars.dataset.keys === keys && bars.children.length === out.length) {
+    out.forEach((d, i) => {
+      const w = d.wins || 0, h = d.wins === null ? 2 : Math.max(2, Math.round(100 * w / max));
+      const el = bars.children[i], today = i === out.length - 1;
+      el.className = 'bar' + (today ? ' today' : '') + (w ? '' : ' zero') + (i === sel ? ' sel' : '');
+      el.querySelector('.col').style.height = h + '%';
+      el.querySelector('.v').textContent = d.wins !== null && (today || (w === max && w > 0)) ? w : '';
+    });
+    showDay(sel);
+    return;
+  }
+  bars.dataset.keys = keys;
   bars.innerHTML = out.map((d, i) => {
     const w = d.wins || 0, h = d.wins === null ? 2 : Math.max(2, Math.round(100 * w / max));
     const today = i === out.length - 1;
@@ -497,8 +517,11 @@ function renderExtras(s, running) {
   const x = s.extras || {};
   // now
   const nw = running && x.now ? x.now : null;
-  $('nowcard').hidden = !nw;
-  if (nw) { $('nowwho').innerHTML = `${esc(nw.seller)} <span>${esc(nw.label || '')}</span>`; nowStart = at(nw.day, nw.time); } else nowStart = null;
+  // Shown the whole time the bot runs: hiding it between giveaways made everything below jump.
+  $('nowcard').hidden = !running;
+  $('nowcard').classList.toggle('idle', !nw);
+  if (nw) { $('nowwho').innerHTML = `${esc(nw.seller)} <span>${esc(nw.label || '')}</span>`; nowStart = at(nw.day, nw.time); }
+  else { $('nowwho').textContent = s.bot && s.bot.paused ? 'paused' : 'waiting for the next giveaway…'; nowStart = null; }
   // last win
   if (x.lastWin) {
     $('lw-who').textContent = x.lastWin.seller;
