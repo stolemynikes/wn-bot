@@ -314,7 +314,9 @@ function stopwatch() {
   const steps = {};
   return {
     t0,
-    wait: { spin: 0, banner: 0 },
+    wait: { spin: 0, banner: 0, poll: 0 },
+    polls: 0,
+    pollClosedAt: null,
     events: [],
     spinSince: null,
     spinEnd: null,
@@ -350,6 +352,17 @@ async function enterSteps(msg, attempt, sw) {
   const t0 = sw.t0;
   const secs = () => ((Date.now() - t0) / 1000).toFixed(1) + 's';
   // Time a sleep spent waiting out a spinning block / banner.
+  // Close a poll if one covers the stream, timing it: how long closing took, and (logged when the
+  // tile shows up) how long after the poll was closed the tile appeared.
+  const closePoll = async (where) => {
+    const start = Date.now();
+    const closed = await dismissOverlay();
+    if (!closed) return null;
+    const took = Date.now() - start;
+    sw.wait.poll += took; sw.polls++; sw.pollClosedAt = Date.now();
+    log(`   closed the poll ("${closed}") in ${(took / 1000).toFixed(1)}s${where}`);
+    return closed;
+  };
   const waitOut = async (kind, ms) => { await wda.sleep(ms); sw.wait[kind] += ms; };
   // Spinning block check that logs when one appears and when it is gone again (with how long it
   // stayed), wherever in the attempt that happens.
@@ -397,12 +410,12 @@ async function enterSteps(msg, attempt, sw) {
     // After 5s without a tile, check for a poll covering it and close only that (every 4s at most).
     if (Date.now() - t0 > 5000 && Date.now() - lastDismiss > 4000) {
       lastDismiss = Date.now();
-      const closed = await dismissOverlay();
-      if (closed) log(`   closed the poll ("${closed}")`);
+      await closePoll('');
     }
     await wda.sleep(700);
   }
   if (sw.spinSince) await spinCheck();
+  if (sw.pollClosedAt && (tile || panelAlready)) log(`   tile showed ${((Date.now() - sw.pollClosedAt) / 1000).toFixed(1)}s after the poll was closed`);
   sw.mark('tile');
   if (!tile && !panelAlready) {
     const file = await saveDebug(msg);
@@ -437,8 +450,7 @@ async function enterSteps(msg, attempt, sw) {
     await closeDetailPage();
     // A poll can sit on top of the tile while the tile is still found underneath: close it first,
     // otherwise the tap would land on a poll option (= a vote).
-    const closedPoll = await dismissOverlay();
-    if (closedPoll) log(`   closed the poll ("${closedPoll}") before tapping the tile`);
+    await closePoll(' before tapping the tile');
     // Gift icon visible = not entered yet: tap it right away (fewest lookups = fastest).
     const icon = await wda.tryFind('predicate string', GIFT_ICON);
     if (icon) {
@@ -594,6 +606,8 @@ function recordAttempt(msg, attempt, result) {
     queued: firstSeenAt.has(msg.key) && sw ? Math.round((sw.t0 - firstSeenAt.get(msg.key)) / 100) / 10 : null,
     steps: sw ? sw.steps() : null,
     spinWait: sw ? sw.wait.spin / 1000 : null,
+    polls: sw ? sw.polls : null,
+    pollWait: sw ? Math.round(sw.wait.poll / 100) / 10 : null,
     bannerWait: sw ? sw.wait.banner / 1000 : null,
     spinEndToTap: sw && sw.spinEnd && sw.tapAt ? Math.round((sw.tapAt - sw.spinEnd) / 100) / 10 : null,
     events: sw ? sw.events : [],
