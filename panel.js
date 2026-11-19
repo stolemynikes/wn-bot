@@ -120,6 +120,15 @@ function signingProblem() {
 for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(sig, () => { stopWda(); setTimeout(() => process.exit(0), 1500); });
 process.on('exit', () => { if (wdaChild) wdaChild.kill('SIGTERM'); });
 
+let pausedSince = null; // set while the bot is paused from the panel
+function pauseBot(on) {
+  if (!child) return 'not running (or started outside the panel)';
+  if (on && pausedSince) return 'already paused';
+  if (!on && !pausedSince) return 'not paused';
+  child.send(on ? 'pause' : 'resume');
+  return on ? 'pausing: the current giveaway is finished first, then the phone is yours' : 'resumed';
+}
+
 function startBot() {
   if (child || lockedPid()) return 'already running';
   if (!WDA_URLS.length) return 'cannot start: phone-ip.txt / tailscale-ip.txt missing';
@@ -136,6 +145,8 @@ function startBot() {
     return 'failed to start: ' + e.message;
   }
   startedAt = Date.now();
+  pausedSince = null;
+  child.on('message', (m) => { if (m && 'paused' in m) pausedSince = m.paused; });
   lastExit = null;
   child.on('error', (e) => { lastExit = { code: null, at: Date.now(), output: 'spawn error: ' + e.message }; });
   const self = child;
@@ -146,7 +157,7 @@ function startBot() {
     let output = '';
     try { output = fs.readFileSync(BOT_OUT, 'utf8').trim().split(/\r?\n/).slice(-8).join('\n'); } catch {}
     lastExit = { code: code ?? signal, at: Date.now(), output };
-    child = null; startedAt = null;
+    child = null; startedAt = null; pausedSince = null;
     stopWda(); // bot is done: switch WebDriverAgent off too
   });
   return MANAGE_WDA ? 'started (WebDriverAgent is starting on the iPhone, can take up to a minute)' : 'started';
@@ -267,7 +278,7 @@ function extras(lines, run) {
 async function status() {
   const pid = child?.pid || lockedPid();
   return {
-    bot: { running: !!pid, pid, byPanel: !!child, since: startedAt, lastExit },
+    bot: { running: !!pid, pid, byPanel: !!child, since: startedAt, paused: pausedSince, lastExit },
     wda: { managed: MANAGE_WDA, running: !!wdaChild, log: wdaLog(), signingProblem: MANAGE_WDA ? signingProblem() : null },
     phone: await phoneStatus(),
     ...logTail(),
@@ -286,6 +297,8 @@ async function handler(req, res) {
     if (req.method === 'GET' && req.url === '/api/status') return send(200, await status());
     if (req.method === 'POST' && req.url === '/api/start') return send(200, { result: startBot() });
     if (req.method === 'POST' && req.url === '/api/stop') return send(200, { result: stopBot() });
+    if (req.method === 'POST' && req.url === '/api/pause') return send(200, { result: pauseBot(true) });
+    if (req.method === 'POST' && req.url === '/api/resume') return send(200, { result: pauseBot(false) });
     if (req.method === 'POST' && req.url === '/api/renew') return send(200, { result: await renewSignature() });
     send(404, { error: 'not found' });
   } catch (e) {

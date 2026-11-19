@@ -77,7 +77,8 @@ main > *:nth-child(n+8) { animation-delay: .28s; }
 @keyframes beat { 50% { box-shadow: 0 0 2px currentColor; opacity: .55; } }
 
 /* buttons */
-.cmds { display: grid; grid-template-columns: 2fr 1fr; gap: 8px; }
+.cmds { display: grid; grid-template-columns: minmax(0, 1.8fr) minmax(0, 1.1fr) minmax(0, 1fr); gap: 8px; }
+.cmds button { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-left: 8px; padding-right: 8px; }
 button {
   font: 600 14px/1 var(--mono); min-height: 48px; border-radius: 14px; cursor: pointer; color: var(--fg);
   -webkit-tap-highlight-color: transparent; touch-action: manipulation; position: relative; overflow: hidden;
@@ -96,6 +97,11 @@ button:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); 
 #stop { color: var(--bad); background: rgba(255, 123, 123, .08); border: 1px solid rgba(255, 123, 123, .3);
   -webkit-backdrop-filter: blur(18px); backdrop-filter: blur(18px); }
 #stop:disabled { opacity: .35; }
+#pause { color: var(--warn); background: rgba(255, 196, 92, .08); border: 1px solid rgba(255, 196, 92, .3);
+  -webkit-backdrop-filter: blur(18px); backdrop-filter: blur(18px); }
+#pause.on { color: #1a1200; background: var(--warn); box-shadow: 0 0 18px rgba(255, 196, 92, .45); }
+#pause:disabled { opacity: .35; }
+#pause .pt { display: block; font-size: 10.5px; font-weight: 500; opacity: .75; margin-top: 1px; font-variant-numeric: tabular-nums; }
 button.busy { color: transparent !important; }
 button.busy::after { content: ""; position: absolute; inset: 0; margin: auto; width: 16px; height: 16px; border-radius: 50%;
   border: 2px solid rgba(255, 255, 255, .3); border-top-color: #fff; animation: spin .7s linear infinite; }
@@ -259,6 +265,7 @@ details .inner { padding-bottom: 14px; animation: rise .35s var(--ease) both; }
 
   <div class="cmds">
     <button id="start">▶ start</button>
+    <button id="pause">❚❚ pause</button>
     <button id="stop">■ stop</button>
   </div>
 
@@ -363,7 +370,7 @@ details .inner { padding-bottom: 14px; animation: rise .35s var(--ease) both; }
 const $ = (id) => document.getElementById(id);
 const DAYS = ['su', 'mo', 'tu', 'we', 'th', 'fr', 'sa'];
 const calm = matchMedia('(prefers-reduced-motion: reduce)');
-let upSince = null, busy = false, lastLines = null, rawLines = null, dayRows = [], filter = 'all', lastWins = null, nowStart = null;
+let upSince = null, pausedSince = null, busy = false, lastLines = null, rawLines = null, dayRows = [], filter = 'all', lastWins = null, nowStart = null;
 
 function setCell(el, text, cls, live) {
   if (el.textContent !== text) el.textContent = text;
@@ -536,6 +543,7 @@ function upFor(ms) { const t = Math.max(0, Math.floor((Date.now() - ms) / 1000))
   return h ? `${h}h${String(m).padStart(2, '0')}m` : `${m}m${String(s).padStart(2, '0')}s`; }
 setInterval(() => {
   const u = $('uptime'); if (u) u.textContent = upSince ? upFor(upSince) : '';
+  if (pausedSince && !busy) $('pause').innerHTML = '▶ resume<span class="pt">' + upFor(pausedSince) + '</span>';
   if (nowStart) { let sec = (Date.now() - nowStart) / 1000; if (sec < 0) sec = 0; $('nowtick').textContent = sec < 100 ? sec.toFixed(1) + 's' : Math.floor(sec / 60) + 'm' + String(Math.floor(sec % 60)).padStart(2, '0') + 's'; }
   const t = Number($('lw-ago').dataset.t); if (t) $('lw-ago').textContent = ago(t);
 }, 100);
@@ -548,7 +556,7 @@ async function refresh() {
   try {
     const s = await fetch('/api/status', { cache: 'no-store' }).then((r) => r.json());
     const b = s.bot;
-    setCell($('bot'), b.running ? 'running' : 'stopped', b.running ? 'ok' : 'warn', b.running);
+    setCell($('bot'), b.running ? (b.paused ? 'paused' : 'running') : 'stopped', b.running && !b.paused ? 'ok' : 'warn', b.running);
     setCell($('phone'), s.phone.reachable ? 'online' : 'offline', s.phone.reachable ? 'ok' : 'bad', s.phone.reachable);
     $('phone').title = s.phone.reachable ? 'via ' + s.phone.via : '';
     if (s.phone.locked === true) setCell($('lock'), 'locked', 'warn');
@@ -558,6 +566,10 @@ async function refresh() {
     if (!busy) {
       const st = $('start'), html = b.running ? '<span class="dot"></span>running <span class="num up" id="uptime"></span>' : '▶ start';
       st.disabled = b.running; $('stop').disabled = !b.running;
+      const pb = $('pause'); pb.disabled = !b.running || !b.byPanel;
+      pausedSince = b.running && b.paused ? b.paused : null;
+      pb.classList.toggle('on', !!pausedSince);
+      if (!pausedSince) pb.textContent = '❚❚ pause';
       st.classList.toggle('on', b.running);
       if (st.dataset.state !== String(b.running)) { st.dataset.state = b.running; st.innerHTML = html; }
     }
@@ -579,7 +591,7 @@ async function refresh() {
   }
 }
 async function act(what, btn) {
-  busy = true; $('start').disabled = $('stop').disabled = true; btn.classList.add('busy');
+  busy = true; $('start').disabled = $('stop').disabled = $('pause').disabled = true; btn.classList.add('busy');
   try {
     const r = await fetch('/api/' + what, { method: 'POST' }).then((r) => r.json());
     toast(r.result || r.error, !!r.error);
@@ -601,6 +613,7 @@ $('renew').onclick = (e) => {
 };
 $('start').onclick = (e) => act('start', e.currentTarget);
 $('stop').onclick = (e) => act('stop', e.currentTarget);
+$('pause').onclick = (e) => act(pausedSince ? 'resume' : 'pause', e.currentTarget);
 // wide screens: the console's top lines up with the first row of cards, not the title
 // wide screens: the console starts level with the first row of cards and ends with the last card
 // (offsetTop/offsetHeight ignore the entry animation's transform)

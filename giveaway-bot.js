@@ -663,7 +663,28 @@ process.on('SIGINT', () => requestStop('Ctrl+C again to quit now'));
 // The control panel (panel.js) starts the bot as a child process. Stop there = stop right now,
 // even in the middle of a giveaway.
 const stopNow = (why) => { log(`Stopped (${why}).`); process.exit(0); };
-process.on('message', (m) => { if (m === 'stop') stopNow('Stop pressed in the panel'); });
+// Pause (panel): finish the giveaway in progress, then leave the phone alone until Resume.
+// WebDriverAgent stays up, so resuming is instant. Giveaways that came in meanwhile are only
+// tried if their push is under RESUME_MAX_AGE old; older ones are most likely over.
+const RESUME_MAX_AGE = 120;
+let paused = false;
+let pausedAt = null;
+let resumeSkip = false;
+process.on('message', (m) => {
+  if (m === 'stop') stopNow('Stop pressed in the panel');
+  if (m === 'pause' && !paused) {
+    paused = true; pausedAt = Date.now();
+    log('Paused (panel) - finishing the current giveaway, then the phone is yours.');
+    if (process.send) process.send({ paused: pausedAt });
+  }
+  if (m === 'resume' && paused) {
+    const secs = Math.round((Date.now() - pausedAt) / 1000);
+    log(`Resumed after ${Math.floor(secs / 60)}m${String(secs % 60).padStart(2, '0')}s.`);
+    writeRow({ type: 'pause', at: new Date(pausedAt).toISOString(), seconds: secs });
+    paused = false; pausedAt = null; resumeSkip = true;
+    if (process.send) process.send({ paused: null });
+  }
+});
 process.on('SIGTERM', () => stopNow('terminated'));
 
 // Only one bot at a time: two would fight over the phone.
@@ -732,6 +753,7 @@ async function connect() {
   }
 
   while (!stopping) {
+    if (paused) { await wda.sleep(500); continue; }
     try {
       const unlocked = await wda.unlockWithPasscode();
       if (unlocked !== 'already unlocked') log(`Phone was locked -> ${unlocked}`);
@@ -758,10 +780,18 @@ async function connect() {
       const todo = (await readBark()).filter((m) => !seen.has(m.key));
       lastBarkRead = Date.now() - readStart;
       barkReads.push(lastBarkRead);
+      if (resumeSkip) {
+        // First read after a pause: skip giveaways whose push is too old (or has no send time).
+        resumeSkip = false;
+        const old = todo.filter((m) => m.kind === 'giveaway' && !((pushDelay(m, Date.now()) ?? Infinity) <= RESUME_MAX_AGE));
+        old.forEach((m) => markSeen(m.key));
+        if (old.length) log(`   skipped ${old.length} giveaway(s) from during the pause (older than ${RESUME_MAX_AGE}s)`);
+        todo.splice(0, todo.length, ...todo.filter((m) => !old.includes(m)));
+      }
       for (const m of todo) if (m.kind === 'giveaway' && !firstSeenAt.has(m.key)) firstSeenAt.set(m.key, Date.now());
       if (todo.length) log(`${todo.length} new message(s)`);
       for (const msg of todo) {
-        if (stopping) break;
+        if (stopping || paused) break;
         if (msg.kind === 'win') {
           log(`🏆 WIN: ${msg.title}  ${msg.url}`);
           markSeen(msg.key);
