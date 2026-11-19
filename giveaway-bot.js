@@ -828,7 +828,10 @@ async function connect() {
       for (const msg of todo) {
         if (stopping || paused) break;
         if (msg.kind === 'win') {
-          log(`🏆 WIN: ${msg.title}  ${msg.url}`);
+          // The prize is the push's second line (not for wins seen live, which have none).
+          const prize = (msg.key.split('\n').map((l) => l.trim()).filter(Boolean)[1] || '');
+          const prizeText = /^Seen live|^https?:/.test(prize) ? '' : prize.replace(/\s*#\d+\s*$/, '');
+          log(`🏆 WIN: ${msg.title}${prizeText ? ' · ' + prizeText : ''}  ${msg.url}`);
           markSeen(msg.key);
           continue;
         }

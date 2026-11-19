@@ -197,6 +197,62 @@ function wdaLog() {
   return [...tail('wda-out.txt', 10), ...tail('wda-history.log', 20).map((l) => '[history] ' + l)];
 }
 
+// Every win in the log, newest first: when, who, which giveaway and (when known) the prize.
+// Older wins were logged without the prize; it is looked up in the remembered Bark messages.
+function winsList(lines) {
+  // From the remembered Bark messages: prizes of wins (pushes from the purchases tab carry it)
+  // and of giveaways, to fill in wins that were only "seen live in the stream".
+  const prizeByUrl = new Map();   // win push url -> prize
+  const gaByUrl = new Map();      // stream url -> [{ sent: 'HH:MM:SS', num, prize }]
+  const gaBySellerNum = new Map(); // 'seller #n' -> prize
+  const clean = (p) => p.replace(/\s*#\d+\s*$/, '').trim();
+  try {
+    for (const k of JSON.parse(fs.readFileSync(path.join(DIR, 'giveaway-seen.json'), 'utf8'))) {
+      const parts = k.split('\n').map((l) => l.trim()).filter(Boolean);
+      const url = (k.match(/https:\/\/www\.whatnot\.com\/\S+/) || [])[0];
+      if (!url || !parts[1]) continue;
+      if (/You won/.test(parts[0])) {
+        if (!/^Seen live|^https?:/.test(parts[1])) prizeByUrl.set(url, clean(parts[1]));
+        continue;
+      }
+      const seller = (/Giveaway — (\S+) 🎁/.exec(parts[0]) || [])[1];
+      const num = (parts[1].match(/#\d+/) || [])[0];
+      if (!seller || !num) continue;
+      gaBySellerNum.set(`${seller} ${num}`, clean(parts[1]));
+      const sent = (/Sent (\d\d:\d\d:\d\d)/.exec(k) || [])[1];
+      if (sent) { if (!gaByUrl.has(url)) gaByUrl.set(url, []); gaByUrl.get(url).push({ sent, num, prize: clean(parts[1]) }); }
+    }
+  } catch {}
+  const out = [];
+  let day = null;
+  const lastTry = new Map(); // seller -> '#n' of the bot's latest attempt on that seller
+  for (const l of lines) {
+    const mk = /^=== (\d{4}-\d\d-\d\d) ===$/.exec(l);
+    if (mk) { day = mk[1]; continue; }
+    const tr = /-> 🎁 Giveaway — (\S+) 🎁 (#\d+)/.exec(l);
+    if (tr) { lastTry.set(tr[1], tr[2]); continue; }
+    if (!/WIN:/.test(l)) continue;
+    const time = (/^\[([^\]]+)\]/.exec(l) || [])[1] || '';
+    const seller = (/You won — (.+?)!/.exec(l) || [])[1] || null;
+    let num = (/🏆\s+(#\d+)/.exec(l) || [])[1] || null;
+    const url = (l.match(/https:\/\/www\.whatnot\.com\/\S+/) || [])[0] || '';
+    let prize = (/ · (.+?)\s{2}https?:/.exec(l) || [])[1] || prizeByUrl.get(url) || null;
+    let guessed = false;
+    if (!prize && url) {
+      // Seen live: the giveaway announced last on that stream before the win is the one drawn.
+      const cands = (gaByUrl.get(url) || []).filter((g) => g.sent <= time).sort((a, b) => (a.sent < b.sent ? -1 : 1));
+      const g = cands[cands.length - 1];
+      if (g) { prize = g.prize; num = num || g.num; guessed = true; }
+    }
+    if (!prize && seller && lastTry.has(seller)) {
+      const n = lastTry.get(seller), p = gaBySellerNum.get(`${seller} ${n}`);
+      if (p) { prize = p; num = num || n; guessed = true; }
+    }
+    out.push({ day, time, seller, num, prize, guessed });
+  }
+  return out.reverse().slice(0, 300);
+}
+
 function logTail() {
   let lines = [];
   try { lines = fs.readFileSync(LOG_FILE, 'utf8').split(/\r?\n/).filter(Boolean); } catch {}
@@ -218,6 +274,7 @@ function logTail() {
   return {
     lines: lines.filter((l) => !l.startsWith('=== ')).slice(-60),
     days: [...perDay.values()].slice(-31),
+    wins: winsList(lines),
     extras: extras(lines, run),
     stats: { entered: count(/ENTERED/), already: count(/already entered/), skipped: count(/\b(skipped|unconfirmed):/), wins: count(/WIN:/) },
   };

@@ -149,6 +149,11 @@ button.busy::after { content: ""; position: absolute; inset: 0; margin: auto; wi
 @keyframes slidein { from { opacity: 0; transform: translateY(-6px); } }
 #log .t { color: var(--dim); }
 #log .e { color: var(--ok); text-shadow: 0 0 6px var(--ok-glow), 0 0 16px rgba(95, 224, 160, .3); }
+#log .wday { color: var(--dim); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; margin-top: 8px;
+  border-top: 1px dashed rgba(255, 255, 255, .12); padding-top: 6px; }
+#log .wday:first-child { margin-top: 0; border-top: 0; padding-top: 0; }
+#log .wday b { color: var(--gold); font-weight: 700; }
+#log .wp { color: var(--fg); opacity: .8; font-weight: 400; }
 #log .w { color: var(--gold); font-weight: 700; text-shadow: 0 0 6px var(--gold-glow), 0 0 18px var(--gold-glow); }
 #log .wrow { background: linear-gradient(90deg, rgba(255, 211, 107, .12), transparent 80%); border-radius: 6px; margin: 0 -6px; padding: 1px 6px; }
 /* start / stop / pause lines: a divider, so it is clear where the bot was off */
@@ -408,7 +413,9 @@ function lineHtml(l) {
   if (/WIN:/.test(l)) {
     // "🏆 WIN: 🏆 You won — seller! 🏆  https://…" becomes "🏆 you won · seller"
     const who = (/You won — (.+?)!/.exec(l) || [])[1];
-    const text = who ? `🏆 you won · ${esc(who)}` : body.replace(/\s*https?:\/\/\S+/g, '');
+    const prize = (/ · (.+?)\s{2}https?:/.exec(l) || [])[1];
+    const text = (who ? `🏆 you won · ${esc(who)}` : body.replace(/\s*https?:\/\/\S+/g, '').replace(/ · .*$/, ''))
+      + (prize ? ` <span class="wp">· ${esc(prize)}</span>` : '');
     return { k: 'w', cls: 'wrow', html: t + `<span class="w">${text}</span>` };
   }
   if (/ENTERED/.test(l)) return { k: 'e', cls: '', html: t + `<span class="e">${body}</span>` };
@@ -426,7 +433,31 @@ function lineHtml(l) {
 }
 // lines that say nothing on their own
 const NOISE = /^\[[^\]]+\]\s+\d+ new message\(s\)\s*$/;
+// "wins" filter: not the last 60 log lines (which rarely hold a win) but every win, per day.
+let winsData = [];
+function renderWins() {
+  const rows = [];
+  let cur;
+  for (const w of winsData) {
+    if (w.day !== cur) {
+      cur = w.day;
+      const n = winsData.filter((x) => x.day === w.day).length;
+      const d = w.day ? new Date(w.day + 'T12:00:00') : null;
+      const h = document.createElement('div'); h.className = 'wday';
+      h.innerHTML = (d ? `${DAYS[d.getDay()]} ${d.getDate()} ${MONTHS[d.getMonth()]}` : 'earlier (no date)') + ` · <b>${n} win${n === 1 ? '' : 's'}</b>`;
+      rows.push(h);
+    }
+    const r = document.createElement('div');
+    r.innerHTML = `<span class="t">${esc(w.time)}</span> <span class="w">🏆 ${esc(w.seller || 'unknown seller')}${w.num ? ' ' + esc(w.num) : ''}</span>`
+      + (w.prize ? ` <span class="wp"${w.guessed ? ' title="worked out from the last giveaway on that stream before the win"' : ''}>· ${w.guessed ? '≈ ' : ''}${esc(w.prize)}</span>` : '');
+    rows.push(r);
+  }
+  if (!rows.length) { const e = document.createElement('div'); e.className = 'dim'; e.textContent = 'no wins yet'; rows.push(e); }
+  $('log').replaceChildren(...rows);
+  lastLines = null; // the log view is rebuilt in full when switching back
+}
 function renderLog(lines) {
+  if (filter === 'w') { renderWins(); return; }
   lines = lines.filter((l) => !NOISE.test(l));
   // only lines that were not there before slide in
   const known = new Set(lastLines || []), first = lastLines === null;
@@ -443,7 +474,7 @@ function renderLog(lines) {
   });
   const cur = document.createElement('div'); cur.innerHTML = '<span class="cursor"></span>';
   $('log').replaceChildren(cur, ...rows);
-  document.querySelectorAll('#chips .chip[data-f]').forEach((c) => { const n = c.querySelector('.c'); if (n) n.textContent = counts[c.dataset.f] || 0; });
+  document.querySelectorAll('#chips .chip[data-f]').forEach((c) => { const n = c.querySelector('.c'); if (n) n.textContent = c.dataset.f === 'w' ? winsData.length : counts[c.dataset.f] || 0; });
 }
 function dayKey(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
 const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
@@ -582,7 +613,9 @@ setInterval(() => {
   const t = Number($('lw-ago').dataset.t); if (t) $('lw-ago').textContent = ago(t);
 }, 100);
 document.querySelectorAll('#chips .chip').forEach((c) => c.addEventListener('click', () => {
+  const was = filter;
   filter = c.dataset.f;
+  if (filter === 'w' || was === 'w') { if (filter === 'w') renderWins(); else if (rawLines !== null) renderLog(rawLines.split('\n')); }
   document.querySelectorAll('#chips .chip').forEach((o) => o.setAttribute('aria-pressed', String(o === c)));
   document.querySelectorAll('#log [data-k]').forEach((r) => { r.hidden = filter !== 'all' && r.dataset.k !== filter; });
 }));
@@ -619,7 +652,12 @@ async function refresh() {
     const sig = s.wda && s.wda.signingProblem;
     $('sigwarn').hidden = !sig || s.phone.reachable;
     $('sigdetail').textContent = sig || '';
+    const winsSig = JSON.stringify(s.wins || []);
+    const winsChanged = winsSig !== JSON.stringify(winsData);
+    winsData = s.wins || [];
+    const wc = document.querySelector('#chips .chip[data-f="w"] .c'); if (wc) wc.textContent = winsData.length;
     if (s.lines.join('\n') !== rawLines) { rawLines = s.lines.join('\n'); renderLog(s.lines); }
+    else if (filter === 'w' && winsChanged) renderWins();
   } catch {
     setCell($('bot'), 'panel offline', 'bad');
   }
