@@ -670,11 +670,12 @@ const RESUME_MAX_AGE = 120;
 let paused = false;
 let pausedAt = null;
 let resumeSkip = false;
+let pauseIdle = false;   // paused and really done with the phone (logged once)
 process.on('message', (m) => {
   if (m === 'stop') stopNow('Stop pressed in the panel');
   if (m === 'pause' && !paused) {
-    paused = true; pausedAt = Date.now();
-    log('Paused (panel) - finishing the current giveaway, then the phone is yours.');
+    paused = true; pausedAt = Date.now(); pauseIdle = false;
+    log('Stopping after the current giveaway (Pause pressed in the panel)...');
     if (process.send) process.send({ paused: pausedAt });
   }
   if (m === 'resume' && paused) {
@@ -753,7 +754,14 @@ async function connect() {
   }
 
   while (!stopping) {
-    if (paused) { await wda.sleep(500); continue; }
+    if (paused) {
+      if (!pauseIdle) {
+        pauseIdle = true;
+        log('Paused - the phone is yours.');
+      }
+      await wda.sleep(500);
+      continue;
+    }
     try {
       const unlocked = await wda.unlockWithPasscode();
       if (unlocked !== 'already unlocked') log(`Phone was locked -> ${unlocked}`);
