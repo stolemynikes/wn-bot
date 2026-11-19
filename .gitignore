@@ -21,3 +21,5 @@ screenshot.png
 
 node_modules/
 .DS_Store
+attempts.jsonl
+archive/

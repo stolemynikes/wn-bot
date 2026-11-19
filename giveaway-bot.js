@@ -297,13 +297,54 @@ async function closeDetailPage() {
   return true;
 }
 
+// ---- timings -------------------------------------------------------------
+// Where each attempt's seconds go, so slow steps can be found from data instead of guessed.
+// Steps: open (link to stream), tile (waiting for the tile), pause (the human-like pauses),
+// panel (opening the Enter panel), button (its Enter button showing), tap, check (checkmark).
+// spin / banner: time spent waiting out a spinning block or a notification banner, inside
+// those steps. spinEndToTap: from the last spinning block disappearing to the tap on Enter.
+const ATTEMPTS_FILE = path.join(__dirname, 'attempts.jsonl');
+function stopwatch() {
+  const t0 = Date.now();
+  let prev = t0;
+  const steps = {};
+  return {
+    t0,
+    wait: { spin: 0, banner: 0 },
+    spinEnd: null,
+    tapAt: null,
+    mark(name) {
+      const now = Date.now();
+      steps[name] = Math.round(((steps[name] || 0) + (now - prev) / 1000) * 10) / 10;
+      prev = now;
+    },
+    steps: () => steps,
+  };
+}
+const fmtSteps = (sw) => [
+  ...Object.entries(sw.steps()).map(([k, v]) => `${k} ${v.toFixed(1)}`),
+  ...Object.entries(sw.wait).filter(([, v]) => v).map(([k, v]) => `${k}-wait ${(v / 1000).toFixed(1)}`),
+].join(' · ');
+
 // ---- Whatnot -------------------------------------------------------------
 // Whatnot stays open between giveaways. Its floating mini-player over Bark doesn't matter:
 // the session is tied to Bark (so Bark's screen is read) and links are opened directly.
+let lastTiming = null; // the stopwatch of the last attempt, for attempts.jsonl
 async function enterGiveaway(msg, attempt = 1) {
-  const t0 = Date.now();
+  const sw = stopwatch();
+  lastTiming = sw;
+  const result = await enterSteps(msg, attempt, sw);
+  const steps = fmtSteps(sw);
+  return steps ? `${result} [${steps}]` : result;
+}
+
+async function enterSteps(msg, attempt, sw) {
+  const t0 = sw.t0;
   const secs = () => ((Date.now() - t0) / 1000).toFixed(1) + 's';
+  // Time a sleep spent waiting out a spinning block / banner.
+  const waitOut = async (kind, ms) => { await wda.sleep(ms); sw.wait[kind] += ms; if (kind === 'spin') sw.spinEnd = Date.now(); };
   await wda.openUrl(msg.url);
+  sw.mark('open');
 
   // Wait for the tile; things can be in the way for a while (e.g. a "NEXT BREAK" poll covering
   // it). On a retry the giveaway may already be over (the tile disappears then), so don't wait as long.
@@ -319,7 +360,7 @@ async function enterGiveaway(msg, attempt = 1) {
     // can be seen. Wait for it to go away; that time doesn't count against the deadline.
     if (await bannerVisible()) {
       if (!saidBanner) { log('   a notification banner is on screen - waiting for it to go away...'); saidBanner = true; }
-      await wda.sleep(1000);
+      await waitOut('banner', 1000);
       deadline = Math.min(deadline + 1200, t0 + 150000);
       continue;
     }
@@ -333,7 +374,7 @@ async function enterGiveaway(msg, attempt = 1) {
     if (await isSpinning()) {
       if (!saidSpin) { log('   a spinning block is hiding the tile - waiting for it to finish...'); saidSpin = true; }
       deadline = Math.min(Math.max(deadline, Date.now() + 10000), t0 + 120000);
-      await wda.sleep(1500);
+      await waitOut('spin', 1500);
       continue;
     }
     // After 5s without a tile, check for a poll covering it and close only that (every 4s at most).
@@ -344,6 +385,7 @@ async function enterGiveaway(msg, attempt = 1) {
     }
     await wda.sleep(700);
   }
+  sw.mark('tile');
   if (!tile && !panelAlready) {
     const file = await saveDebug(msg);
     return `skipped: no Giveaway tile after ${secs()}${attempt > 1 ? ' (giveaway probably ended)' : ''} (saved ${file})`;
@@ -360,7 +402,7 @@ async function enterGiveaway(msg, attempt = 1) {
   }
 
   // Wait like a person would, then tap somewhere on the tile (not always the same pixel).
-  if (!panelAlready) await pause(...DELAY_OPEN);
+  if (!panelAlready) { await pause(...DELAY_OPEN); sw.mark('pause'); }
   // Open the Enter Giveaway panel: first a human-like tap somewhere on the gift icon; if the panel
   // doesn't appear within 6s, fall back to a plain element click on the icon, then on the tile text.
   //
@@ -426,12 +468,12 @@ async function enterGiveaway(msg, attempt = 1) {
     let lastTry = Date.now();
     while (Date.now() < coverDeadline) {
       if (await wda.tryFind('predicate string', CHECK_ICON)) return `already entered (checkmark) ${secs()}`;
-      if (await bannerVisible()) { missingSince = null; await wda.sleep(1000); continue; }
+      if (await bannerVisible()) { missingSince = null; await waitOut('banner', 1000); continue; }
       if (await panelIsOpen()) { opened = true; break; }
       if (await isSpinning()) {
         if (!said.spin) { log('   a spinning block is hiding the tile - waiting for it to finish...'); said.spin = true; }
         missingSince = null;
-        await wda.sleep(1500);
+        await waitOut('spin', 1500);
         continue;
       }
       const present = (await wda.tryFind('predicate string', GIFT_ICON)) || (await wda.tryFind('predicate string', TILE));
@@ -454,6 +496,7 @@ async function enterGiveaway(msg, attempt = 1) {
       await wda.sleep(1000);
     }
   }
+  sw.mark('panel');
   if (opened === 'entered') return `already entered (checkmark) ${secs()}`;
   if (opened !== true) {
     const file = await saveDebug(msg);
@@ -462,12 +505,14 @@ async function enterGiveaway(msg, attempt = 1) {
 
   // The panel can be recognised (Terms & Conditions) a moment before its Enter button is: wait for it.
   let enter = await wda.waitFor('predicate string', ENTER_BUTTON, { timeout: 4000, interval: 300 });
+  sw.mark('button');
   if (!enter) {
     if (await wda.tryFind('predicate string', CHECK_ICON)) return `already entered (checkmark) ${secs()}`;
     const file = await saveDebug(msg);
     return `skipped: "Enter Giveaway" button did not appear ${secs()} (saved ${file})`;
   }
   await pause(...DELAY_ENTER);
+  sw.mark('pause');
   await waitForBannerGone();
   // The panel may have closed while waiting: look again, reopen the tile once if needed.
   enter = await wda.tryFind('predicate string', ENTER_BUTTON);
@@ -475,14 +520,18 @@ async function enterGiveaway(msg, attempt = 1) {
     const again = await openTile();
     if (again === 'entered') return `already entered (checkmark) ${secs()}`;
     enter = again === true ? await wda.tryFind('predicate string', ENTER_BUTTON) : null;
+    sw.mark('panel');
     if (!enter) return `skipped: "Enter Giveaway" panel closed while waiting ${secs()}`;
     await pause(0.5, 2);
+    sw.mark('pause');
   }
   if (!(await humanTap(enter))) {
     // The button was redrawn between finding and tapping: find it again and tap.
     const fresh = await wda.tryFind('predicate string', ENTER_BUTTON);
     if (fresh) await humanTap(fresh);
   }
+  sw.tapAt = Date.now();
+  sw.mark('tap');
 
   // Confirm: the gift icon turns into a checkmark once entered. If the human-like tap didn't
   // register (Enter button still there, no checkmark), press it the plain way once.
@@ -495,10 +544,39 @@ async function enterGiveaway(msg, attempt = 1) {
       if (check) log('   (human tap on Enter did not register; plain tap did)');
     }
   }
+  sw.mark('check');
   if (check) return `ENTERED ${secs()}`;
   const file = await saveDebug(msg);
   // "unconfirmed" counts as failed, so it's retried: the retry sees the checkmark if it did work.
   return `unconfirmed: pressed Enter Giveaway, but no checkmark ${secs()} (saved ${file})`;
+}
+
+// One JSON line per attempt in attempts.jsonl. stream + giveaway match the watcher's log
+// ("confirmed in the draw ... #18 ... /live/<stream>"), so it can tell whether an entry really
+// counted. queued: seconds between the bot first seeing the message and starting on it.
+const firstSeenAt = new Map();
+function recordAttempt(msg, attempt, result) {
+  const sw = lastTiming;
+  const m = /Giveaway — (\S+) 🎁/.exec(msg.title) || [];
+  const plain = result.replace(/ \[[^\]]*\]$/, '');
+  const outcome = /^ENTERED/.test(plain) ? 'entered' : /^already entered/.test(plain) ? 'already'
+    : (/^(\w+):/.exec(plain) || [, 'other'])[1];
+  const row = {
+    at: new Date().toISOString(),
+    seller: m[1] || null,
+    giveaway: (msg.title.match(/#\d+/) || [null])[0],
+    stream: (/\/live\/([0-9a-f-]+)/.exec(msg.url) || [])[1] || null,
+    attempt,
+    outcome,
+    reason: outcome === 'entered' || outcome === 'already' ? null : plain.replace(/ \(saved [^)]*\)/, '').slice(0, 160),
+    total: sw ? Math.round((Date.now() - sw.t0) / 100) / 10 : null,
+    queued: firstSeenAt.has(msg.key) && sw ? Math.round((sw.t0 - firstSeenAt.get(msg.key)) / 100) / 10 : null,
+    steps: sw ? sw.steps() : null,
+    spinWait: sw ? sw.wait.spin / 1000 : null,
+    bannerWait: sw ? sw.wait.banner / 1000 : null,
+    spinEndToTap: sw && sw.spinEnd && sw.tapAt ? Math.round((sw.tapAt - sw.spinEnd) / 100) / 10 : null,
+  };
+  try { fs.appendFileSync(ATTEMPTS_FILE, JSON.stringify(row) + '\n'); } catch {}
 }
 
 // ---- main loop -----------------------------------------------------------
@@ -608,6 +686,7 @@ async function connect() {
       }
 
       const todo = (await readBark()).filter((m) => !seen.has(m.key));
+      for (const m of todo) if (m.kind === 'giveaway' && !firstSeenAt.has(m.key)) firstSeenAt.set(m.key, Date.now());
       if (todo.length) log(`${todo.length} new message(s)`);
       for (const msg of todo) {
         if (stopping) break;
@@ -637,6 +716,7 @@ async function connect() {
           result = 'error: ' + e.message.slice(0, 150);
         }
         log(`   ${result}`);
+        recordAttempt(msg, attempt, result);
         // Skips/errors are often timing (streams arriving close together): leave them unseen so the
         // next round tries again, up to MAX_ATTEMPTS.
         const failed = /^(skipped|error|unconfirmed)/.test(result);
@@ -646,7 +726,7 @@ async function connect() {
           const reachable = await wda.status().then(() => true, () => false);
           if (!reachable) { attempts.set(msg.key, attempt - 1); throw new Error('WDA not reachable (connection dropped during this giveaway)'); }
         }
-        if (!failed || attempt >= MAX_ATTEMPTS) { markSeen(msg.key); attempts.delete(msg.key); }
+        if (!failed || attempt >= MAX_ATTEMPTS) { markSeen(msg.key); attempts.delete(msg.key); firstSeenAt.delete(msg.key); }
         await pause(1, 4);
       }
       if (!todo.length) await (HUMAN ? pause(POLL / 1000 - 1.5, POLL / 1000 + 1.5) : wda.sleep(POLL));
