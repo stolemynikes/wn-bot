@@ -588,14 +588,44 @@ async function enterSteps(msg, attempt, sw) {
 // ("confirmed in the draw ... #18 ... /live/<stream>"), so it can tell whether an entry really
 // counted. queued: seconds between the bot first seeing the message and starting on it.
 const firstSeenAt = new Map();
+let lastBarkRead = null;    // ms the Bark read that found this message took
+let lastPauseAfter = null;  // ms of the pause after the previous attempt
+let lastAttemptEnd = null;  // when the previous attempt finished
+const barkReads = [];       // Bark read times since the last summary row
+function writeRow(row) {
+  try { fs.appendFileSync(ATTEMPTS_FILE, JSON.stringify(row) + '\n'); } catch {}
+}
+// Once an hour: how long reading Bark takes (it runs every few seconds, so one row per read
+// would be far too many).
+setInterval(() => {
+  if (!barkReads.length) return;
+  const v = barkReads.splice(0).sort((a, b) => a - b);
+  writeRow({ type: 'bark', at: new Date().toISOString(), reads: v.length,
+    median: v[v.length >> 1] / 1000, p90: v[Math.floor(v.length * 0.9)] / 1000, max: v[v.length - 1] / 1000 });
+}, 3600000).unref();
+// "Sent HH:MM:SS" in the push (added by the watcher) -> seconds from push to the bot seeing it.
+function pushDelay(msg, seenAt) {
+  const m = /Sent (\d\d):(\d\d):(\d\d)/.exec(msg.key);
+  if (!m || !seenAt) return null;
+  const sent = new Date(seenAt);
+  sent.setHours(+m[1], +m[2], +m[3], 0);
+  if (sent - seenAt > 3600000) sent.setDate(sent.getDate() - 1); // sent just before midnight
+  return Math.round((seenAt - sent) / 100) / 10;
+}
 function recordAttempt(msg, attempt, result) {
   const sw = lastTiming;
   const m = /Giveaway — (\S+) 🎁/.exec(msg.title) || [];
   const plain = result.replace(/ \[[^\]]*\]$/, '');
   const outcome = /^ENTERED/.test(plain) ? 'entered' : /^already entered/.test(plain) ? 'already'
     : (/^(\w+):/.exec(plain) || [, 'other'])[1];
+  const seenAt = firstSeenAt.get(msg.key);
   const row = {
+    type: 'attempt',
     at: new Date().toISOString(),
+    pushDelay: pushDelay(msg, seenAt),
+    barkRead: lastBarkRead != null ? lastBarkRead / 1000 : null,
+    gapBefore: lastAttemptEnd && sw ? Math.round((sw.t0 - lastAttemptEnd) / 100) / 10 : null,
+    pauseBefore: lastPauseAfter != null ? Math.round(lastPauseAfter / 100) / 10 : null,
     seller: m[1] || null,
     giveaway: (msg.title.match(/#\d+/) || [null])[0],
     stream: (/\/live\/([0-9a-f-]+)/.exec(msg.url) || [])[1] || null,
@@ -612,7 +642,9 @@ function recordAttempt(msg, attempt, result) {
     spinEndToTap: sw && sw.spinEnd && sw.tapAt ? Math.round((sw.tapAt - sw.spinEnd) / 100) / 10 : null,
     events: sw ? sw.events : [],
   };
-  try { fs.appendFileSync(ATTEMPTS_FILE, JSON.stringify(row) + '\n'); } catch {}
+  writeRow(row);
+  lastAttemptEnd = Date.now();
+  lastPauseAfter = null;
 }
 
 // ---- main loop -----------------------------------------------------------
@@ -708,6 +740,7 @@ async function connect() {
       if (errorStreak) {
         const outage = outageSince ? Date.now() - outageSince : 0;
         log(`Phone reachable again (via ${wda.WDA_URL}) after ${Math.round(outage / 1000)}s.`);
+        writeRow({ type: 'outage', at: new Date(outageSince).toISOString(), seconds: Math.round(outage / 100) / 10 });
         errorStreak = 0;
         outageSince = null;
         // After a longer outage, the giveaways that came in meanwhile are mostly over: skip them,
@@ -721,7 +754,10 @@ async function connect() {
         }
       }
 
+      const readStart = Date.now();
       const todo = (await readBark()).filter((m) => !seen.has(m.key));
+      lastBarkRead = Date.now() - readStart;
+      barkReads.push(lastBarkRead);
       for (const m of todo) if (m.kind === 'giveaway' && !firstSeenAt.has(m.key)) firstSeenAt.set(m.key, Date.now());
       if (todo.length) log(`${todo.length} new message(s)`);
       for (const msg of todo) {
@@ -763,7 +799,9 @@ async function connect() {
           if (!reachable) { attempts.set(msg.key, attempt - 1); throw new Error('WDA not reachable (connection dropped during this giveaway)'); }
         }
         if (!failed || attempt >= MAX_ATTEMPTS) { markSeen(msg.key); attempts.delete(msg.key); firstSeenAt.delete(msg.key); }
+        const pauseStart = Date.now();
         await pause(1, 4);
+        lastPauseAfter = Date.now() - pauseStart;
       }
       if (!todo.length) await (HUMAN ? pause(POLL / 1000 - 1.5, POLL / 1000 + 1.5) : wda.sleep(POLL));
     } catch (e) {
